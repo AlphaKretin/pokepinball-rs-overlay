@@ -58,9 +58,30 @@ local RARE_SPECIES = {
 
 local SCREEN_WIDTH = 240
 local SCREEN_HEIGHT = 160
-local RIGHT_PAD = 120
-local DOWN_PAD = 55
 local LINE_HEIGHT = 14
+
+-- Portrait grid for the spawn pool. Source images (lua/images/portraits/,
+-- copied from the pinball decomp's graphics/mon_portraits) are 48x32, drawn
+-- at native size -- any resize call here is a real, lossy downscale done in
+-- software; BizHawk's window zoom afterwards just magnifies whatever pixels
+-- we handed it; it can't recover detail a software resize already threw
+-- away. So native size + BizHawk's own (nearest-neighbor) window zoom is
+-- the only combination that stays crisp. 3 columns needs only 3 rows for
+-- the real max pool size of 9 (checked against the ROM's gWildMonLocations
+-- table), with room to spare below the grid for future features.
+local PORTRAIT_W, PORTRAIT_H = 48, 32
+local GRID_COLUMNS = 3
+local CELL_GAP = 3
+local CELL_W = PORTRAIT_W + CELL_GAP
+local CELL_H = PORTRAIT_H + CELL_GAP + 8 -- +8 for optional pct text below
+local PORTRAIT_DIR = "images/portraits/"
+
+local RIGHT_PAD = GRID_COLUMNS * CELL_W + 8
+
+-- DOWN_PAD is picked (not derived from grid content, which needs far less)
+-- to keep the panel's overall shape close to the established ~16:9 target:
+-- (SCREEN_WIDTH + RIGHT_PAD) / (SCREEN_HEIGHT + DOWN_PAD) ~= 16/9.
+local DOWN_PAD = math.floor((SCREEN_WIDTH + RIGHT_PAD) * 9 / 16) - SCREEN_HEIGHT
 
 client.SetGameExtraPadding(0, 0, RIGHT_PAD, DOWN_PAD)
 
@@ -79,6 +100,13 @@ local function speciesName(index)
 		return SpeciesNames[index + 1]
 	end
 	return "-"
+end
+
+-- Portrait filenames are the lowercase species name (spaces/apostrophes/dots
+-- stripped) plus "_portrait.png", matching lua/images/portraits/.
+local function portraitPath(name)
+	local key = name:lower():gsub("[ '.]", "")
+	return PORTRAIT_DIR .. key .. "_portrait.png"
 end
 
 -- AreaNames disambiguates Ruby/Sapphire for data indexing, but the current
@@ -237,6 +265,62 @@ local function readSpawnPool(area, threeArrowsLit, withWeights)
 	return pool
 end
 
+-- Semi-transparent overlay dimming a caught species' portrait: dimmer once
+-- its whole evolution line is caught (D, no longer worth pursuing at all)
+-- than when just this species is caught but the line isn't finished (C).
+local DIM_COLOR_LINE_CAUGHT = 0xB0202020
+local DIM_COLOR_CAUGHT = 0x70202020
+
+-- Corner flags are plain solid-color squares, not icons or digits: at this
+-- pixel budget, shapes/glyphs don't read cleanly -- an "ellipse" this small
+-- rendered as a square anyway, and drawText numerals were illegible.
+-- Colors are chosen so none of the three collide with each other.
+local MARKER_SIZE = 8
+local RARE_MARKER_COLOR = 0xFFFFD700 -- gold
+local TWO_EXCLUSIVE_MARKER_COLOR = 0xFF2E9BFF -- blue
+local THREE_EXCLUSIVE_MARKER_COLOR = 0xFFFF3B30 -- red
+
+local function drawMarker(x, y, color)
+	gui.drawRectangle(x, y, MARKER_SIZE, MARKER_SIZE, "black", color)
+end
+
+local function drawPortraitCell(x, y, entry)
+	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
+
+	if entry.caught then
+		local dimColor = entry.lineCaught and DIM_COLOR_LINE_CAUGHT or DIM_COLOR_CAUGHT
+		gui.drawRectangle(x, y, PORTRAIT_W, PORTRAIT_H, nil, dimColor)
+	end
+
+	local exclusiveColor = nil
+	if entry.exclusive == "2" then
+		exclusiveColor = TWO_EXCLUSIVE_MARKER_COLOR
+	elseif entry.exclusive == "3" then
+		exclusiveColor = THREE_EXCLUSIVE_MARKER_COLOR
+	end
+
+	-- Both markers default to the top-left corner, since a species being
+	-- both rare and arrow-exclusive never actually happens in this game's
+	-- data (checked against the ROM directly). Only fall back to top-right
+	-- for the rare one in the case that it somehow does, so they don't
+	-- overlap.
+	if entry.rare and exclusiveColor then
+		drawMarker(x - 2, y - 2, RARE_MARKER_COLOR)
+		drawMarker(x + PORTRAIT_W - MARKER_SIZE + 2, y - 2, exclusiveColor)
+	elseif entry.rare then
+		-- R: rare, still worth flagging as a former/current priority target
+		-- even once caught -- there's no need to hide it once caught the
+		-- way the C mark does, since it's not competing for the same corner.
+		drawMarker(x - 2, y - 2, RARE_MARKER_COLOR)
+	elseif exclusiveColor then
+		drawMarker(x - 2, y - 2, exclusiveColor)
+	end
+
+	if entry.pct then
+		gui.drawText(x, y + PORTRAIT_H, string.format("%.0f%%", entry.pct), "white", nil, 7)
+	end
+end
+
 -- Right of the game screen, extending down to cover the bottom-right
 -- corner: current-encounter info.
 local function drawSidePanel(area, areaCdCount, areaTotal, pool)
@@ -248,19 +332,12 @@ local function drawSidePanel(area, areaCdCount, areaTotal, pool)
 	gui.drawText(x, y, shortAreaName(area) .. " " .. areaCdCount .. "/" .. areaTotal, "white")
 	y = y + LINE_HEIGHT * 1.5
 
-	gui.drawText(x, y, "Possible spawns:", "white")
-	y = y + LINE_HEIGHT
-	for _, entry in ipairs(pool) do
-		-- Caught takes precedence over rare once it stops mattering: an
-		-- already-caught rare species isn't a priority target anymore.
-		local caughtMark = entry.caught and "C" or (entry.rare and "R" or "-")
-		local marks = entry.exclusive .. caughtMark .. (entry.lineCaught and "D" or "-")
-		local line = marks .. " " .. entry.name
-		if entry.pct then
-			line = line .. string.format(" (%.1f%%)", entry.pct)
-		end
-		gui.drawText(x, y, line, "white")
-		y = y + LINE_HEIGHT
+	for i, entry in ipairs(pool) do
+		local col = (i - 1) % GRID_COLUMNS
+		local row = math.floor((i - 1) / GRID_COLUMNS)
+		local cellX = x + col * CELL_W
+		local cellY = y + row * CELL_H
+		drawPortraitCell(cellX, cellY, entry)
 	end
 end
 
