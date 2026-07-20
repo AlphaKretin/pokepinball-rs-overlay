@@ -98,6 +98,16 @@ local ADDR_SPECIES_INFO = 0x086A3700
 local SPECIES_INFO_ENTRY_BYTES = 0x18
 local SPECIES_INFO_EVOLUTION_TARGET_OFFSET = 0x15
 
+-- PinballGame.evolvablePartySpecies[MAX_EVOLVABLE_PARTY_SIZE=16] / .size:
+-- the queue of caught/hatched species currently awaiting Evolution Mode
+-- (include/global.h:363/365). A species being caught (dex "C") doesn't mean
+-- *this session's* catch is still sitting in this queue -- it may already
+-- have evolved, or never have been queued this session at all. See
+-- docs/ram-map.md's Evolution Mode section.
+local ADDR_EVOLVABLE_PARTY_SPECIES = PINBALL_GAME + 0x270
+local ADDR_EVOLVABLE_PARTY_SIZE = PINBALL_GAME + 0x281
+local MAX_EVOLVABLE_PARTY_SIZE = 16
+
 local NUM_SPECIES = #SpeciesNames
 
 -- The hardcoded rare-species set from BuildSpeciesWeightsForCatchEmMode
@@ -284,6 +294,41 @@ local function isEvolutionLineCaught(species)
 	return true
 end
 
+-- Species currently sitting in the evolvable-party queue (awaiting Evolution
+-- Mode), as a set for fast membership checks.
+local function readEvolvablePartySet()
+	local size = Memory.readbyte(ADDR_EVOLVABLE_PARTY_SIZE)
+	local set = {}
+	for i = 0, math.min(size, MAX_EVOLVABLE_PARTY_SIZE) - 1 do
+		set[Memory.readbyte(ADDR_EVOLVABLE_PARTY_SPECIES + i)] = true
+	end
+	return set
+end
+
+-- True when species, or any step of its evolution line (same up-to-2-hop
+-- walk as isEvolutionLineCaught), is currently queued for Evolution Mode --
+-- i.e. catching is done, all that's left is playing evo mode to finish the
+-- line. Distinct from "caught" (dex flag, permanent) since the queue is
+-- session-scoped: a species can be caught from a prior session/ball with
+-- nothing queued right now, or already evolved out of the queue.
+local function isPendingEvolution(species, queueSet)
+	if queueSet[species] then
+		return true
+	end
+	local current = species
+	for _ = 1, 2 do
+		local target = evolutionTarget(current)
+		if target >= NUM_SPECIES then
+			break
+		end
+		if queueSet[target] then
+			return true
+		end
+		current = target
+	end
+	return false
+end
+
 -- Every species that can spawn in an area, across both arrow-states, each
 -- tagged with which row(s) it appears in (three-arrows rows are a superset
 -- of the two-arrows rows in practice, but this doesn't assume that -- it
@@ -384,7 +429,7 @@ local function readAreaCdProgress(area)
 end
 
 -- Species pool for an area, combined across both arrow-states.
-local function readSpawnPool(area)
+local function readSpawnPool(area, queueSet)
 	local pool = {}
 	for _, entry in ipairs(readAreaSpeciesRows(area)) do
 		local exclusive = "-"
@@ -398,6 +443,7 @@ local function readSpawnPool(area)
 			exclusive = exclusive,
 			caught = isCaught(entry.species),
 			lineCaught = isEvolutionLineCaught(entry.species),
+			pendingEvolution = isPendingEvolution(entry.species, queueSet),
 			rare = RARE_SPECIES[entry.species] or false,
 		}
 	end
@@ -409,7 +455,7 @@ end
 -- to dedup across (one flat row per field) and no exclusive/rare markers
 -- (neither concept applies to egg mode -- checked, no RARE_SPECIES entry
 -- appears in either field's egg list).
-local function readEggPool(field)
+local function readEggPool(field, queueSet)
 	local rowAddr = ADDR_EGG_LOCATIONS + field * EGG_LOCATIONS_ROW_BYTES
 	local pool = {}
 	for slot = 0, EGG_POOL_SIZE - 1 do
@@ -418,6 +464,7 @@ local function readEggPool(field)
 			name = speciesName(species),
 			caught = isCaught(species),
 			lineCaught = isEvolutionLineCaught(species),
+			pendingEvolution = isPendingEvolution(species, queueSet),
 		}
 	end
 	return pool
@@ -430,14 +477,33 @@ end
 -- turned out to be the 1px undimmed edge left at the portrait's border --
 -- which is the tell that a deliberate, saturated border reads far more
 -- clearly than tinting the whole image ever did. Green once the whole
--- evolution line is caught (D, no longer worth pursuing); orange while
--- just this species is caught but the line isn't finished (C); black
--- (currently invisible against the panel's own black background, but
--- explicit so it'll show correctly if that background ever changes) when
--- not caught at all.
+-- evolution line is caught (D, no longer worth pursuing); purple when the
+-- line isn't finished but this species (or an evolution of it) is sitting
+-- in the current evolvable-party queue, i.e. no more catching needed here,
+-- just play Evolution Mode (C+ -- takes precedence over C but not D, since
+-- the dex "caught" flag alone can't tell you whether *this session's* catch
+-- is still queued to evolve); orange while just caught with nothing queued
+-- (C); black (currently invisible against the panel's own black background,
+-- but explicit so it'll show correctly if that background ever changes)
+-- when not caught at all.
 local BORDER_COLOR_LINE_CAUGHT = 0xFF34C759
+local BORDER_COLOR_PENDING_EVOLUTION = 0xFFFF2D95
 local BORDER_COLOR_CAUGHT = 0xFFFF9500
 local BORDER_COLOR_UNCAUGHT = 0xFF000000
+
+-- Shared by drawPortraitCell/drawEggHatchCell: D > C+ > C > uncaught.
+local function borderColorFor(entry)
+	if not entry.caught then
+		return BORDER_COLOR_UNCAUGHT
+	end
+	if entry.lineCaught then
+		return BORDER_COLOR_LINE_CAUGHT
+	end
+	if entry.pendingEvolution then
+		return BORDER_COLOR_PENDING_EVOLUTION
+	end
+	return BORDER_COLOR_CAUGHT
+end
 
 -- gui.drawRectangle's width/height are corner-to-corner (the right/bottom
 -- border line lands at x+width, y+height), not a pixel count the way
@@ -462,12 +528,7 @@ end
 
 local function drawPortraitCell(x, y, entry)
 	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
-
-	local borderColor = BORDER_COLOR_UNCAUGHT
-	if entry.caught then
-		borderColor = entry.lineCaught and BORDER_COLOR_LINE_CAUGHT or BORDER_COLOR_CAUGHT
-	end
-	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, borderColor)
+	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, borderColorFor(entry))
 
 	local exclusiveColor = nil
 	if entry.exclusive == "2" then
@@ -569,12 +630,7 @@ end
 -- line-caught border, same colors/meaning as drawPortraitCell.
 local function drawEggHatchCell(x, y, entry)
 	gui.drawImage(eggIconPath(entry.name), x, y, EGG_ICON_W, EGG_ICON_H)
-
-	local borderColor = BORDER_COLOR_UNCAUGHT
-	if entry.caught then
-		borderColor = entry.lineCaught and BORDER_COLOR_LINE_CAUGHT or BORDER_COLOR_CAUGHT
-	end
-	drawPortraitBorder(x, y, EGG_ICON_W, EGG_ICON_H, borderColor)
+	drawPortraitBorder(x, y, EGG_ICON_W, EGG_ICON_H, borderColorFor(entry))
 end
 
 -- Left edge of the canvas (x=0 -- see GAME_X), full canvas height, mirroring
@@ -638,8 +694,9 @@ end
 local function drawOverlay()
 	local areaIndex = Memory.readbyte(ADDR_AREA)
 	local field = Memory.readbyte(ADDR_SELECTED_FIELD)
-	local pool = readSpawnPool(areaIndex)
-	local eggPool = readEggPool(field)
+	local queueSet = readEvolvablePartySet()
+	local pool = readSpawnPool(areaIndex, queueSet)
+	local eggPool = readEggPool(field, queueSet)
 	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 

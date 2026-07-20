@@ -333,6 +333,44 @@ name landed 2 bytes later than `0x16` would predict, confirming `0x18`.
 Lesson: always verify struct array strides against a second element, not just
 the base address against the first.
 
+## Evolution mode
+
+`PinballGame.evolvablePartySpecies[MAX_EVOLVABLE_PARTY_SIZE=16]` (offset
+`0x270`, abs `0x02000270`, `include/global.h:363`) — a FIFO queue of
+caught/hatched species awaiting Evolution Mode, populated whenever a catch or
+hatch result has `gSpeciesInfo[species].evolutionTarget < SPECIES_NONE`
+(`src/main_board_catch_hatch_picker.c:27-36`, `113-121`). Count in
+`evolvablePartySize` (offset `0x281`, s8); `evolvingPartyIndex` (offset
+`0x280`, s8) tracks which queue slot is currently mid-evolution, not a count
+— don't confuse the two adjacent offsets.
+
+Evolution Mode itself (`MAIN_BOARD_STATE_EVO_MODE=6`) needs two independent
+gates, both true, checked identically in several board files (e.g.
+`src/ruby_catch_holes.c:399-401`, `src/main_board_to_be_split.c:504-508`):
+```c
+if (gCurrentPinballGame->evoArrowProgress > 2 && gCurrentPinballGame->evolvablePartySize > 0)
+    RequestBoardStateTransition(MAIN_BOARD_STATE_EVO_MODE);
+```
+- `evoArrowProgress` (offset `0x72E`, abs `0x0200072E`) — the evo-mode arrow
+  meter (parallel to `catchModeArrows`), must reach 3.
+- `evolvablePartySize > 0` — the queue above must be non-empty.
+
+Lighting all 3 evo arrows with an empty queue accomplishes nothing: the
+center-hole roulette's evo-mode prize slot silently downgrades to the catch-
+mode prize in that case (`src/main_board_center_capture_hole.c:107-111`).
+Both `catchModeArrows` and `evoArrowProgress` are preserved (not reset) across
+a ball loss within a session, restored via `arrowProgressPreserved`
+(`src/all_board_state_transitions_and_idle.c:75-133`).
+
+**Why the dex "caught" flag isn't enough to tell you this**: `pokedexFlags`
+is permanent (SRAM) and says nothing about whether *this session's* catch of
+that species is still sitting in the queue — it may already have evolved out,
+or the dex entry may be from a previous session with nothing queued right
+now. `lua/Overlay.lua`'s `isPendingEvolution()` walks a species and its
+up-to-2-hop evolution targets (same depth as `isEvolutionLineCaught`) against
+this queue to decide whether to show the "C+" (caught, evolution pending)
+border state instead of plain "C".
+
 ## Known gaps
 
 Things not yet confirmed from source reading — either need more digging in
