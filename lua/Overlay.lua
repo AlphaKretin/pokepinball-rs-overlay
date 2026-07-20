@@ -100,49 +100,110 @@ local function isEvolutionLineCaught(species)
 	return true
 end
 
--- Species pool for a given area + arrows state, from ROM (gWildMonLocations).
--- When withWeights is true, also reads the live cumulative weight table
--- (PinballGame.speciesWeights[], only valid while boardState is
--- MAIN_BOARD_STATE_CATCH_EM_MODE -- see docs/ram-map.md) and pairs each
--- species with its % chance of being picked next.
-local function readSpawnPool(area, threeArrowsLit, withWeights)
-	local rowIndex = threeArrowsLit and 1 or 0
-	local rowAddr = ADDR_WILD_MON_LOCATIONS + (area * 2 + rowIndex) * WILD_MON_ROW_BYTES
-	local totalWeight = withWeights and Memory.readword(ADDR_TOTAL_WEIGHT) or nil
+-- Every species that can spawn in an area, across both arrow-states
+-- (three-arrows rows are a superset of the two-arrows rows, but this doesn't
+-- assume that -- it just unions both, deduplicated).
+local function readAreaSpeciesSet(area)
+	local seenSpecies = {}
+	local list = {}
+	for rowIndex = 0, 1 do
+		local rowAddr = ADDR_WILD_MON_LOCATIONS + (area * 2 + rowIndex) * WILD_MON_ROW_BYTES
+		for slot = 0, WILD_MON_SLOTS_PER_ROW - 1 do
+			local species = Memory.readword(rowAddr + slot * 2)
+			if species < NUM_SPECIES and not seenSpecies[species] then
+				seenSpecies[species] = true
+				list[#list + 1] = species
+			end
+		end
+	end
+	return list
+end
 
-	local pool = {}
-	local prevCumWeight = 0
-	for slot = 0, WILD_MON_SLOTS_PER_ROW - 1 do
-		local species = Memory.readword(rowAddr + slot * 2)
-		local pct = nil
-		if withWeights then
+-- Every species in speciesList, plus every step of each one's evolution line
+-- (up to 2 hops, matching the game's own lookahead depth), deduplicated.
+local function expandWithEvolutions(speciesList)
+	local seenSpecies = {}
+	local expanded = {}
+	local function addUnique(species)
+		if not seenSpecies[species] then
+			seenSpecies[species] = true
+			expanded[#expanded + 1] = species
+		end
+	end
+	for _, species in ipairs(speciesList) do
+		addUnique(species)
+		local current = species
+		for _ = 1, 2 do
+			local target = evolutionTarget(current)
+			if target >= NUM_SPECIES then
+				break
+			end
+			addUnique(target)
+			current = target
+		end
+	end
+	return expanded
+end
+
+-- How many species you'd still need to obtain (by catch or evolution) to get
+-- everything catchable in this area to CD: every base species catchable here
+-- plus every step of each one's evolution line, vs. how many of those are
+-- already caught.
+local function readAreaCdProgress(area)
+	local expanded = expandWithEvolutions(readAreaSpeciesSet(area))
+	local caughtCount = 0
+	for _, species in ipairs(expanded) do
+		if isCaught(species) then
+			caughtCount = caughtCount + 1
+		end
+	end
+	return caughtCount, #expanded
+end
+
+-- Species pool for an area, combined across both arrow-states. When
+-- withWeights is true, also reads the live cumulative weight table
+-- (PinballGame.speciesWeights[], only valid while boardState is
+-- MAIN_BOARD_STATE_CATCH_EM_MODE -- see docs/ram-map.md) and attaches a %
+-- chance to whichever species are in the currently-active arrows row (the
+-- only row the weight table actually reflects).
+local function readSpawnPool(area, threeArrowsLit, withWeights)
+	local pctBySpecies = {}
+	if withWeights then
+		local activeRowIndex = threeArrowsLit and 1 or 0
+		local activeRowAddr = ADDR_WILD_MON_LOCATIONS + (area * 2 + activeRowIndex) * WILD_MON_ROW_BYTES
+		local totalWeight = Memory.readword(ADDR_TOTAL_WEIGHT)
+		local prevCumWeight = 0
+		for slot = 0, WILD_MON_SLOTS_PER_ROW - 1 do
+			local species = Memory.readword(activeRowAddr + slot * 2)
 			local cumWeight = Memory.readword(ADDR_SPECIES_WEIGHTS + slot * 2)
-			if totalWeight and totalWeight > 0 then
-				pct = (cumWeight - prevCumWeight) / totalWeight * 100
+			if totalWeight > 0 and species < NUM_SPECIES then
+				pctBySpecies[species] = (cumWeight - prevCumWeight) / totalWeight * 100
 			end
 			prevCumWeight = cumWeight
 		end
-		if species < NUM_SPECIES then
-			pool[#pool + 1] = {
-				name = speciesName(species),
-				pct = pct,
-				caught = isCaught(species),
-				lineCaught = isEvolutionLineCaught(species),
-			}
-		end
+	end
+
+	local pool = {}
+	for _, species in ipairs(readAreaSpeciesSet(area)) do
+		pool[#pool + 1] = {
+			name = speciesName(species),
+			pct = pctBySpecies[species],
+			caught = isCaught(species),
+			lineCaught = isEvolutionLineCaught(species),
+		}
 	end
 	return pool
 end
 
 -- Right of the game screen, extending down to cover the bottom-right
 -- corner: current-encounter info.
-local function drawSidePanel(area, pool)
+local function drawSidePanel(area, areaCdCount, areaTotal, pool)
 	local x, y = SCREEN_WIDTH + 4, 4
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
 
 	gui.drawRectangle(SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
 
-	gui.drawText(x, y, shortAreaName(area), "white")
+	gui.drawText(x, y, shortAreaName(area) .. " " .. areaCdCount .. "/" .. areaTotal, "white")
 	y = y + LINE_HEIGHT * 1.5
 
 	gui.drawText(x, y, "Possible spawns:", "white")
@@ -174,9 +235,10 @@ local function drawOverlay()
 	local threeArrowsLit = Memory.readbyte(ADDR_CATCH_MODE_ARROWS) == 3
 	local inCatchEmMode = Memory.readbyte(ADDR_BOARD_STATE) == MAIN_BOARD_STATE_CATCH_EM_MODE
 	local pool = readSpawnPool(areaIndex, threeArrowsLit, inCatchEmMode)
+	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 
-	drawSidePanel(area, pool)
+	drawSidePanel(area, areaCdCount, areaTotal, pool)
 	drawBottomBar(caught)
 end
 
