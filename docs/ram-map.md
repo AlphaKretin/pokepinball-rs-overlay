@@ -155,6 +155,52 @@ and `gCommonAndEggWeights` (rarity weight table) — these are data tables, not
 single variables; not yet read. They matter for predicting/manipulating
 spawns.
 
+## Travel mode (area-to-area movement)
+
+`PinballGame.areaRouletteSlotIndex` / `areaRouletteNextSlot` / `areaRouletteFarSlot`
+(offsets `0x032`/`0x033`/`0x034`) index into `gAreaRouletteTable` (ROM,
+`data/rom_1.s:11`, abs `0x08055A68`, shape `s16[2 fields][7 slots]`, row
+stride 14 bytes) to resolve `PinballGame.area`. Slots 0-5 per field are the
+normal 6-area travel ring. Slot 6 is Ruin — **not** e-reader-exclusive: it's
+also the guaranteed, deterministic destination of every 6th travel since the
+last Ruin visit (see `areaVisitCount` below), independent of the e-reader
+card. The card only affects which area the roulette *starts* you on.
+
+`UpdateTravelMode()` (`src/main_board_travel_mode.c:143-163`) resolves the
+destination a travel-mode launch lands on:
+```c
+if (areaVisitCount < 5)
+{
+    if (travelRolloverTriggerHitZone == TRAVEL_ROLLOVER_TRIGGER_HIT_ZONE_LEFT)
+        areaRouletteSlotIndex = areaRouletteNextSlot;  // "go left"
+    else
+        areaRouletteSlotIndex = areaRouletteFarSlot;   // "go right" (skips one)
+    // ...NextSlot/FarSlot advance, areaVisitCount++
+}
+else
+{
+    areaRouletteSlotIndex = 6;  // Ruin, unconditionally -- hit zone ignored
+    areaVisitCount = 0;
+}
+```
+So on any travel where `areaVisitCount < 5`, the current left/right
+destinations are just `gAreaRouletteTable[selectedField][areaRouletteNextSlot]`
+(left) and `gAreaRouletteTable[selectedField][areaRouletteFarSlot]` (right).
+`NextSlot`/`FarSlot` are recomputed on every area-roulette spin
+(`main_board_intro_mode.c:209-211`, at the start of a ball) and every ring
+travel (`main_board_travel_mode.c:155-156`), and hold valid resting values
+the rest of the time — unlike `currentSpecies`/`speciesWeights`, no
+board-state staleness gate is needed to read them.
+
+**Handled in the overlay**: on the 6th travel (`areaVisitCount == 5`, offset
+`0x036`), the destination is forced to Ruin regardless of `NextSlot`/
+`FarSlot` or which side is hit, so `lua/Overlay.lua`'s `readTravelOptions`
+checks `areaVisitCount` first and returns Ruin for both sides in that case.
+The Ruin-override branch never writes `NextSlot`/`FarSlot`, so they carry
+through a Ruin visit unchanged — the travel after Ruin resumes with exactly
+the same two ring destinations the forced travel skipped, no extra state
+needed to track that.
+
 ## Score / HUD
 
 All on `PinballGame` (base `0x02000000`), lower priority than the above:

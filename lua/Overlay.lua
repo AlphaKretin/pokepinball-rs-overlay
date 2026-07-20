@@ -19,6 +19,37 @@ local ADDR_AREA = PINBALL_GAME + 0x035
 local ADDR_CATCH_MODE_ARROWS = PINBALL_GAME + 0x73D
 local ADDR_TOTAL_WEIGHT = PINBALL_GAME + 0x12E
 local ADDR_SPECIES_WEIGHTS = PINBALL_GAME + 0x130 -- s16[25], cumulative; only [0..7] are meaningful in catch-em mode
+local ADDR_SELECTED_FIELD = GMAIN + 0x04 -- FIELD_RUBY=0 / FIELD_SAPPHIRE=1
+
+-- Travel mode ("go left" / "go right" between areas) resolves its two
+-- destinations from PinballGame.areaRouletteNextSlot/FarSlot (indices into
+-- gAreaRouletteTable below), not from the current area directly -- see
+-- main_board_travel_mode.c:150-153 (left picks NextSlot, anything else picks
+-- FarSlot). Both fields are recomputed on every spin/travel and hold valid
+-- resting values at all other times, so no board-state staleness gate is
+-- needed here (unlike currentSpecies/speciesWeights above).
+local ADDR_AREA_ROULETTE_NEXT_SLOT = PINBALL_GAME + 0x033
+local ADDR_AREA_ROULETTE_FAR_SLOT = PINBALL_GAME + 0x034
+
+-- Counts travels since the last Ruin visit (reset to 0 at ball start and
+-- after each Ruin landing). When this reads 5, the *next* travel is forced
+-- to Ruin regardless of NextSlot/FarSlot or which side is hit -- see
+-- AREA_ROULETTE_RUIN_SLOT below. The Ruin-override branch never writes
+-- NextSlot/FarSlot, so they carry through a Ruin visit unchanged and the
+-- travel after that resumes exactly where the skipped normal travel would
+-- have left off.
+local ADDR_AREA_VISIT_COUNT = PINBALL_GAME + 0x036
+local AREA_VISIT_COUNT_FORCES_RUIN = 5
+
+-- gAreaRouletteTable: ROM data, data/rom_1.s:11, abs 0x08055A68. Shape
+-- [2 fields][7 slots] of s16 AREA_* values -- slots 0-5 are the normal
+-- travel ring per field. Slot 6 is Ruin: reachable both via the e-reader
+-- bonus card (as a roulette-spin starting area) AND, unconditionally, as
+-- every 6th travel since the last Ruin visit (see AREA_VISIT_COUNT above),
+-- independent of the card -- main_board_travel_mode.c:147-163.
+local ADDR_AREA_ROULETTE_TABLE = 0x08055A68
+local AREA_ROULETTE_TABLE_SLOTS = 7
+local AREA_ROULETTE_RUIN_SLOT = 6
 
 local MAIN_BOARD_STATE_CATCH_EM_MODE = 4
 
@@ -172,6 +203,27 @@ local function readAreaSpeciesRows(area)
 		end
 	end
 	return list
+end
+
+-- The two areas travel mode would take you to from here: left picks the
+-- adjacent ring slot, right skips one -- except when the next travel is the
+-- forced 6th-since-Ruin one, where both sides land on Ruin regardless (see
+-- AREA_VISIT_COUNT_FORCES_RUIN above). See ADDR_AREA_ROULETTE_NEXT_SLOT
+-- comment for why NextSlot/FarSlot are read directly rather than recomputed.
+local function readTravelOptions()
+	local field = Memory.readbyte(ADDR_SELECTED_FIELD)
+	local rowAddr = ADDR_AREA_ROULETTE_TABLE + field * AREA_ROULETTE_TABLE_SLOTS * 2
+
+	if Memory.readbyte(ADDR_AREA_VISIT_COUNT) >= AREA_VISIT_COUNT_FORCES_RUIN then
+		local ruinArea = Memory.readword(rowAddr + AREA_ROULETTE_RUIN_SLOT * 2)
+		return ruinArea, ruinArea
+	end
+
+	local leftSlot = Memory.readbyte(ADDR_AREA_ROULETTE_NEXT_SLOT)
+	local rightSlot = Memory.readbyte(ADDR_AREA_ROULETTE_FAR_SLOT)
+	local leftArea = Memory.readword(rowAddr + leftSlot * 2)
+	local rightArea = Memory.readword(rowAddr + rightSlot * 2)
+	return leftArea, rightArea
 end
 
 local function readAreaSpeciesSet(area)
@@ -342,7 +394,7 @@ end
 
 -- Right of the game screen, extending down to cover the bottom-right
 -- corner: current-encounter info.
-local function drawSidePanel(area, areaCdCount, areaTotal, pool)
+local function drawSidePanel(area, areaCdCount, areaTotal, pool, leftArea, leftCdCount, leftTotal, rightArea, rightCdCount, rightTotal)
 	local x, y = SCREEN_WIDTH + 4, 4
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
 
@@ -351,13 +403,23 @@ local function drawSidePanel(area, areaCdCount, areaTotal, pool)
 	gui.drawText(x, y, shortAreaName(area) .. " " .. areaCdCount .. "/" .. areaTotal, "white")
 	y = y + LINE_HEIGHT * 1.5
 
+	local rows = 0
 	for i, entry in ipairs(pool) do
 		local col = (i - 1) % GRID_COLUMNS
 		local row = math.floor((i - 1) / GRID_COLUMNS)
+		rows = math.max(rows, row + 1)
 		local cellX = x + col * CELL_W
 		local cellY = y + row * CELL_H
 		drawPortraitCell(cellX, cellY, entry)
 	end
+	y = y + rows * CELL_H + LINE_HEIGHT * 0.5
+
+	-- Travel destinations, below the grid: which area you'd land in going
+	-- left vs. right from here, plus each one's own CD progress, so you can
+	-- tell at a glance which direction is worth heading toward.
+	gui.drawText(x, y, "<- " .. shortAreaName(leftArea) .. " " .. leftCdCount .. "/" .. leftTotal, "white")
+	y = y + LINE_HEIGHT
+	gui.drawText(x, y, "-> " .. shortAreaName(rightArea) .. " " .. rightCdCount .. "/" .. rightTotal, "white")
 end
 
 -- Below the game screen only (side panel claims the corner): persistent
@@ -379,7 +441,13 @@ local function drawOverlay()
 	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 
-	drawSidePanel(area, areaCdCount, areaTotal, pool)
+	local leftAreaIndex, rightAreaIndex = readTravelOptions()
+	local leftArea = AreaNames[leftAreaIndex + 1] or "?"
+	local rightArea = AreaNames[rightAreaIndex + 1] or "?"
+	local leftCdCount, leftTotal = readAreaCdProgress(leftAreaIndex)
+	local rightCdCount, rightTotal = readAreaCdProgress(rightAreaIndex)
+
+	drawSidePanel(area, areaCdCount, areaTotal, pool, leftArea, leftCdCount, leftTotal, rightArea, rightCdCount, rightTotal)
 	drawBottomBar(caught)
 end
 
