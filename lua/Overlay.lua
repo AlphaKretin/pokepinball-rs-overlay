@@ -265,11 +265,29 @@ local function readSpawnPool(area, threeArrowsLit, withWeights)
 	return pool
 end
 
--- Semi-transparent overlay dimming a caught species' portrait: dimmer once
--- its whole evolution line is caught (D, no longer worth pursuing at all)
--- than when just this species is caught but the line isn't finished (C).
-local DIM_COLOR_LINE_CAUGHT = 0xB0202020
-local DIM_COLOR_CAUGHT = 0x70202020
+-- A colored border around a caught species' portrait, instead of a
+-- translucent dim overlay: dimming (even with a wide alpha gap between the
+-- two states) read as barely-different at a glance against portraits with
+-- such varied source brightness/color, and the most visible part of it
+-- turned out to be the 1px undimmed edge left at the portrait's border --
+-- which is the tell that a deliberate, saturated border reads far more
+-- clearly than tinting the whole image ever did. Green once the whole
+-- evolution line is caught (D, no longer worth pursuing); orange while
+-- just this species is caught but the line isn't finished (C); black
+-- (currently invisible against the panel's own black background, but
+-- explicit so it'll show correctly if that background ever changes) when
+-- not caught at all.
+local BORDER_COLOR_LINE_CAUGHT = 0xFF34C759
+local BORDER_COLOR_CAUGHT = 0xFFFF9500
+local BORDER_COLOR_UNCAUGHT = 0xFF000000
+
+-- gui.drawRectangle's width/height are corner-to-corner (the right/bottom
+-- border line lands at x+width, y+height), not a pixel count the way
+-- drawImage's w/h are -- so this only needs +1, not +2, to sit flush
+-- against a portrait occupying columns/rows [x, x+w) / [y, y+h).
+local function drawPortraitBorder(x, y, w, h, color)
+	gui.drawRectangle(x - 1, y - 1, w + 1, h + 1, color, nil)
+end
 
 -- Corner flags are plain solid-color squares, not icons or digits: at this
 -- pixel budget, shapes/glyphs don't read cleanly -- an "ellipse" this small
@@ -287,10 +305,11 @@ end
 local function drawPortraitCell(x, y, entry)
 	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
 
+	local borderColor = BORDER_COLOR_UNCAUGHT
 	if entry.caught then
-		local dimColor = entry.lineCaught and DIM_COLOR_LINE_CAUGHT or DIM_COLOR_CAUGHT
-		gui.drawRectangle(x, y, PORTRAIT_W, PORTRAIT_H, nil, dimColor)
+		borderColor = entry.lineCaught and BORDER_COLOR_LINE_CAUGHT or BORDER_COLOR_CAUGHT
 	end
+	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, borderColor)
 
 	local exclusiveColor = nil
 	if entry.exclusive == "2" then
