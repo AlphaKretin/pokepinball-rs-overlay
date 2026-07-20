@@ -192,14 +192,10 @@ travel (`main_board_travel_mode.c:155-156`), and hold valid resting values
 the rest of the time — unlike `currentSpecies`/`speciesWeights`, no
 board-state staleness gate is needed to read them.
 
-**Handled in the overlay**: on the 6th travel (`areaVisitCount == 5`, offset
-`0x036`), the destination is forced to Ruin regardless of `NextSlot`/
-`FarSlot` or which side is hit, so `lua/Overlay.lua`'s `readTravelOptions`
-checks `areaVisitCount` first and returns Ruin for both sides in that case.
-The Ruin-override branch never writes `NextSlot`/`FarSlot`, so they carry
-through a Ruin visit unchanged — the travel after Ruin resumes with exactly
-the same two ring destinations the forced travel skipped, no extra state
-needed to track that.
+Ruin's override branch (`areaVisitCount >= 5`) never writes `NextSlot`/
+`FarSlot` — they carry through a Ruin visit unchanged, so the travel after
+Ruin resumes with exactly the same two ring destinations the forced travel
+skipped.
 
 ## Score / HUD
 
@@ -242,12 +238,10 @@ The weighting itself factors in dex-progress (`gCommonAndEggWeights` =
 `data/rom_2.s:4276-4277`), a hardcoded rare-species set with E-Reader-bonus
 doubling, a `Clamperl` evolution-branch special case, a generic
 evolution-chain max-weight lookup, and a no-repeat rule against
-`lastCatchSpecies` — not reimplemented in Lua, we read the game's own
-computed result instead. That result is **only valid while
-`boardState == 4`** (`MAIN_BOARD_STATE_CATCH_EM_MODE`) — the overlay gates on
-this before reading `speciesWeights`/`totalWeight`, same staleness pattern as
-the `currentSpecies` fix. Outside that state the pool is still shown, just
-without percentages.
+`lastCatchSpecies` — not reimplemented in Lua; reading the game's own
+computed result instead is the only sane option. That result is **only
+valid while `boardState == 4`** (`MAIN_BOARD_STATE_CATCH_EM_MODE`) — same
+staleness pattern as the `currentSpecies` fix.
 
 There's also a separate hidden legendary/bonus-species branch (Chikorita,
 Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in
@@ -255,6 +249,27 @@ Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in
 `gWildMonLocations` entirely — roughly 1-in-50/1-in-100 odds, gated behind
 `caughtMonCount >= 5` and a `gBoardConfig` species-caught-count threshold not
 yet located. Not reflected in the pool listing.
+
+## Portrait / location icon graphics (static ROM data)
+
+`gAreaPortraitIndexes`: ROM, `data/rom_1.s:622-625`, abs `0x08137928`. `s16[14]`,
+`AREA_*` index -> icon index 0-12 (13 unique icons -- Ruin Ruby/Sapphire share
+one, `AREA_RUIN_RUBY=12`/`AREA_RUIN_SAPPHIRE=13` both map to icon 12; every
+other area already has a distinct Ruby/Sapphire icon).
+
+`gPortraitGenericGraphics`: ROM, `data/rom_1.s:1343-1344`, abs `0x0848D68C`,
+size `0x2700` = 13 x `0x300` bytes (one flat GBA-4bpp tile blob per icon, 24
+tiles/icon). `gPortraitGenericPalettes`: ROM, `data/rom_1.s:988`, abs
+`0x081C00E4`, size `0x200` = 13 x 16 BGR555 colors (one dedicated palette per
+icon). Both DMA'd together by `LoadPortraitGraphics()` (case
+`PORTRAIT_STATE_CURRENT_LOCATION`, `src/all_board_portrait_display.c:35-41`)
+whenever the travel-mode/area-roulette UI shows a location.
+
+Unlike `gWildMonLocations`/`gSpeciesInfo` above, this data has no live Lua
+reader — it's image data, extracted once, offline, rather than read at
+runtime. See `docs/graphics-extraction.md` for the extraction process (tile
+arrangement format, how it was verified) and `python/extract_area_icons.py`
+to regenerate.
 
 ## Species evolution data (static ROM data)
 

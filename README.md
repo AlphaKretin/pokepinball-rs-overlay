@@ -16,7 +16,8 @@ target for now.
   input sequences, live RNG probes.
 - `python/` — analysis and offline tooling fed by data from `lua/`: physics
   solving (input sequence from a desired ball trajectory), RNG search/
-  manipulation, visualization of game state.
+  manipulation, visualization of game state, one-off asset extraction from
+  the ROM (see `docs/graphics-extraction.md`).
 - `docs/` — our own notes: RAM structures (named/annotated from the `pret`
   decompilation), RNG findings, physics model writeups.
 - `reference/` (gitignored) — external repos kept for reference, not vendored
