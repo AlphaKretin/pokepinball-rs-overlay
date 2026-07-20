@@ -29,6 +29,14 @@ local ADDR_WILD_MON_LOCATIONS = 0x08055A84
 local WILD_MON_SLOTS_PER_ROW = 8
 local WILD_MON_ROW_BYTES = WILD_MON_SLOTS_PER_ROW * 2
 
+-- gSpeciesInfo: ROM data, struct PokemonSpecies[NUM_SPECIES], 0x16 bytes each.
+-- Address found empirically (not linker-annotated in source): hex-searched
+-- ROM for "TREECKO   " (name field, offset 0x07) and subtracted the offset.
+-- See docs/ram-map.md.
+local ADDR_SPECIES_INFO = 0x086A3700
+local SPECIES_INFO_ENTRY_BYTES = 0x16
+local SPECIES_INFO_EVOLUTION_TARGET_OFFSET = 0x15
+
 local NUM_SPECIES = #SpeciesNames
 
 local SCREEN_WIDTH = 240
@@ -63,6 +71,35 @@ local function shortAreaName(name)
 	return stripped
 end
 
+local function isCaught(species)
+	return Memory.readbyte(ADDR_POKEDEX_FLAGS + species) == PokedexFlag.CAUGHT
+end
+
+local function evolutionTarget(species)
+	return Memory.readbyte(ADDR_SPECIES_INFO + species * SPECIES_INFO_ENTRY_BYTES + SPECIES_INFO_EVOLUTION_TARGET_OFFSET)
+end
+
+-- Mirrors the up-to-2-step evolution walk in BuildSpeciesWeightsForCatchEmMode
+-- (not the Clamperl 3-way special case). True when species and every step of
+-- its evolution line are already caught, i.e. it's stuck at minimum weight.
+local function isEvolutionLineCaught(species)
+	if not isCaught(species) then
+		return false
+	end
+	local current = species
+	for _ = 1, 2 do
+		local target = evolutionTarget(current)
+		if target >= NUM_SPECIES then
+			break
+		end
+		if not isCaught(target) then
+			return false
+		end
+		current = target
+	end
+	return true
+end
+
 -- Species pool for a given area + arrows state, from ROM (gWildMonLocations).
 -- When withWeights is true, also reads the live cumulative weight table
 -- (PinballGame.speciesWeights[], only valid while boardState is
@@ -86,7 +123,12 @@ local function readSpawnPool(area, threeArrowsLit, withWeights)
 			prevCumWeight = cumWeight
 		end
 		if species < NUM_SPECIES then
-			pool[#pool + 1] = { name = speciesName(species), pct = pct }
+			pool[#pool + 1] = {
+				name = speciesName(species),
+				pct = pct,
+				caught = isCaught(species),
+				lineCaught = isEvolutionLineCaught(species),
+			}
 		end
 	end
 	return pool
@@ -106,7 +148,8 @@ local function drawSidePanel(area, pool)
 	gui.drawText(x, y, "Possible spawns:", "white")
 	y = y + LINE_HEIGHT
 	for _, entry in ipairs(pool) do
-		local line = entry.name
+		local marks = (entry.caught and "C" or "-") .. (entry.lineCaught and "D" or "-")
+		local line = marks .. " " .. entry.name
 		if entry.pct then
 			line = line .. string.format(" (%.1f%%)", entry.pct)
 		end

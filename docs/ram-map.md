@@ -210,6 +210,26 @@ Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in
 `caughtMonCount >= 5` and a `gBoardConfig` species-caught-count threshold not
 yet located. Not reflected in the pool listing.
 
+## Species evolution data (static ROM data)
+
+`gSpeciesInfo`: ROM, `struct PokemonSpecies` (`include/types.h:74-84`) array of
+`NUM_SPECIES` (205) entries, `0x16` (22) bytes each, `species.h` numbering.
+`evolutionTarget` field at struct offset `0x15` (u8; a value `>= SPECIES_NONE`
+(205) means "no further evolution").
+
+Unlike `gWildMonLocations`, this is defined as plain C data
+(`src/data/species.h`), not hand-placed asm, so its source has no `@ 0x08...`
+address comment — pret's own repo doesn't give us this address without an
+actual linked build. **Found empirically instead**: BizHawk's Hex Editor,
+ROM domain, searching for the ASCII string `TREECKO   ` (name field, space-padded
+to 10 chars, struct offset `0x07` — see `src/data/species.h:5`) landed at file
+offset `0x6A3707`. Subtracting the `0x07` field offset gives the table base as
+a raw file offset (`0x6A3700`); adding the GBA ROM base (`0x08000000`) gives
+the real address: **`0x086A3700`**. Verified only against `SPECIES_TREECKO`
+(index 0) — not cross-checked against a second species, so if anything reads
+wrong here first, re-verify the entry stride (`0x16`) and base by hex-searching
+a second name (e.g. `GROVYLE   `, expect it at `0x086A3700 + 0x16`).
+
 ## Known gaps
 
 Things not yet confirmed from source reading — either need more digging in
