@@ -179,20 +179,29 @@ arrows are lit). `catchModeArrows`: `PinballGame` offset `0x73D`.
 
 Row address: `0x08055A84 + (area * 2 + (threeArrowsLit and 1 or 0)) * 16`.
 
-This is the **structural pool only** — which species can possibly spawn, not
-weighted by how likely each one is. Actual pick probability is computed by
+This is the structural pool — which species can possibly spawn, not weighted
+by how likely each one is. Actual pick probability is computed by
 `BuildSpeciesWeightsForCatchEmMode()` (`src/main_board_catch_hatch_picker.c:156-249`)
-into `PinballGame.speciesWeights[25]` (offset `0x130`, cumulative) /
-`totalWeight` (offset `0x12E`), factoring in dex-progress weighting
-(`gCommonAndEggWeights` = `{10, 10, 15, 15, 2}` for
-unseen/seen/shared/shared+seen/caught, `data/rom_2.s:4276-4277`), a hardcoded
-rare-species set with E-Reader-bonus doubling, an evolution-chain max-weight
-lookup, and a no-repeat rule against `lastCatchSpecies`. Deliberately not
-reimplemented in Lua — that table is only valid/populated once catch mode has
-actually been entered (same staleness caveat as `currentSpecies` above), so
-it can't be used for pre-catch planning anyway. If weights are wanted later,
-read `speciesWeights[]`/`totalWeight` live while `boardState == 4`, gated the
-same way as the `currentSpecies` fix.
+into `PinballGame.totalWeight` (offset `0x12E`, s16) and
+`PinballGame.speciesWeights[25]` (offset `0x130`, s16 array, **cumulative**
+sum — only indices `[0..7]` are meaningful for catch-em mode, aligned
+1:1 with the same `gWildMonLocations[area][threeArrows][i]` slot order used
+for the pool above; the rest of the 25-entry buffer is reused by
+`BuildSpeciesWeightsForEggMode()` for unrelated data). Per-slot weight is
+`speciesWeights[i] - speciesWeights[i-1]` (with `speciesWeights[-1] = 0`);
+percent chance is `weight / totalWeight * 100`.
+
+The weighting itself factors in dex-progress (`gCommonAndEggWeights` =
+`{10, 10, 15, 15, 2}` for unseen/seen/shared/shared+seen/caught,
+`data/rom_2.s:4276-4277`), a hardcoded rare-species set with E-Reader-bonus
+doubling, a `Clamperl` evolution-branch special case, a generic
+evolution-chain max-weight lookup, and a no-repeat rule against
+`lastCatchSpecies` — not reimplemented in Lua, we read the game's own
+computed result instead. That result is **only valid while
+`boardState == 4`** (`MAIN_BOARD_STATE_CATCH_EM_MODE`) — the overlay gates on
+this before reading `speciesWeights`/`totalWeight`, same staleness pattern as
+the `currentSpecies` fix. Outside that state the pool is still shown, just
+without percentages.
 
 There's also a separate hidden legendary/bonus-species branch (Chikorita,
 Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in

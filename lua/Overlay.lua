@@ -14,8 +14,13 @@ local GMAIN = 0x0200B0C0
 local ADDR_POKEDEX_FLAGS = GMAIN + 0x74 -- [NUM_SPECIES], one byte per species
 
 local PINBALL_GAME = 0x02000000
+local ADDR_BOARD_STATE = PINBALL_GAME + 0x013
 local ADDR_AREA = PINBALL_GAME + 0x035
 local ADDR_CATCH_MODE_ARROWS = PINBALL_GAME + 0x73D
+local ADDR_TOTAL_WEIGHT = PINBALL_GAME + 0x12E
+local ADDR_SPECIES_WEIGHTS = PINBALL_GAME + 0x130 -- s16[25], cumulative; only [0..7] are meaningful in catch-em mode
+
+local MAIN_BOARD_STATE_CATCH_EM_MODE = 4
 
 -- gWildMonLocations: ROM data, [14 areas][2 arrow-states][8 slots] of u16
 -- SPECIES_* values, SPECIES_NONE-padded. Area-major, then two-arrows row,
@@ -58,16 +63,30 @@ local function shortAreaName(name)
 	return stripped
 end
 
--- Static pool of species that can spawn for a given area + arrows state
--- (doesn't account for dex-progress weighting, see docs/ram-map.md).
-local function readSpawnPool(area, threeArrowsLit)
+-- Species pool for a given area + arrows state, from ROM (gWildMonLocations).
+-- When withWeights is true, also reads the live cumulative weight table
+-- (PinballGame.speciesWeights[], only valid while boardState is
+-- MAIN_BOARD_STATE_CATCH_EM_MODE -- see docs/ram-map.md) and pairs each
+-- species with its % chance of being picked next.
+local function readSpawnPool(area, threeArrowsLit, withWeights)
 	local rowIndex = threeArrowsLit and 1 or 0
 	local rowAddr = ADDR_WILD_MON_LOCATIONS + (area * 2 + rowIndex) * WILD_MON_ROW_BYTES
+	local totalWeight = withWeights and Memory.readword(ADDR_TOTAL_WEIGHT) or nil
+
 	local pool = {}
+	local prevCumWeight = 0
 	for slot = 0, WILD_MON_SLOTS_PER_ROW - 1 do
 		local species = Memory.readword(rowAddr + slot * 2)
+		local pct = nil
+		if withWeights then
+			local cumWeight = Memory.readword(ADDR_SPECIES_WEIGHTS + slot * 2)
+			if totalWeight and totalWeight > 0 then
+				pct = (cumWeight - prevCumWeight) / totalWeight * 100
+			end
+			prevCumWeight = cumWeight
+		end
 		if species < NUM_SPECIES then
-			pool[#pool + 1] = speciesName(species)
+			pool[#pool + 1] = { name = speciesName(species), pct = pct }
 		end
 	end
 	return pool
@@ -86,8 +105,12 @@ local function drawSidePanel(area, pool)
 
 	gui.drawText(x, y, "Possible spawns:", "white")
 	y = y + LINE_HEIGHT
-	for _, name in ipairs(pool) do
-		gui.drawText(x, y, "  " .. name, "white")
+	for _, entry in ipairs(pool) do
+		local line = entry.name
+		if entry.pct then
+			line = line .. string.format(" (%.1f%%)", entry.pct)
+		end
+		gui.drawText(x, y, line, "white")
 		y = y + LINE_HEIGHT
 	end
 end
@@ -106,7 +129,8 @@ local function drawOverlay()
 	local areaIndex = Memory.readbyte(ADDR_AREA)
 	local area = AreaNames[areaIndex + 1] or "?"
 	local threeArrowsLit = Memory.readbyte(ADDR_CATCH_MODE_ARROWS) == 3
-	local pool = readSpawnPool(areaIndex, threeArrowsLit)
+	local inCatchEmMode = Memory.readbyte(ADDR_BOARD_STATE) == MAIN_BOARD_STATE_CATCH_EM_MODE
+	local pool = readSpawnPool(areaIndex, threeArrowsLit, inCatchEmMode)
 	local caught = readDexCaughtCount()
 
 	drawSidePanel(area, pool)
