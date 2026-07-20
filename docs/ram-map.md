@@ -213,9 +213,12 @@ yet located. Not reflected in the pool listing.
 ## Species evolution data (static ROM data)
 
 `gSpeciesInfo`: ROM, `struct PokemonSpecies` (`include/types.h:74-84`) array of
-`NUM_SPECIES` (205) entries, `0x16` (22) bytes each, `species.h` numbering.
-`evolutionTarget` field at struct offset `0x15` (u8; a value `>= SPECIES_NONE`
-(205) means "no further evolution").
+`NUM_SPECIES` (205) entries, `species.h` numbering. `evolutionTarget` field at
+struct offset `0x15` (u8; a value `>= SPECIES_NONE` (205) means "no further
+evolution"). **Entry stride is `0x18` (24) bytes, not `0x16` (22)** — the
+struct's own field offsets only add up to `0x16`, but agbcc pads the struct
+with 2 trailing bytes, confirmed empirically (see below). Don't derive the
+stride from the field offsets alone.
 
 Unlike `gWildMonLocations`, this is defined as plain C data
 (`src/data/species.h`), not hand-placed asm, so its source has no `@ 0x08...`
@@ -225,10 +228,17 @@ ROM domain, searching for the ASCII string `TREECKO   ` (name field, space-padde
 to 10 chars, struct offset `0x07` — see `src/data/species.h:5`) landed at file
 offset `0x6A3707`. Subtracting the `0x07` field offset gives the table base as
 a raw file offset (`0x6A3700`); adding the GBA ROM base (`0x08000000`) gives
-the real address: **`0x086A3700`**. Verified only against `SPECIES_TREECKO`
-(index 0) — not cross-checked against a second species, so if anything reads
-wrong here first, re-verify the entry stride (`0x16`) and base by hex-searching
-a second name (e.g. `GROVYLE   `, expect it at `0x086A3700 + 0x16`).
+the real address: **`0x086A3700`**.
+
+Initially assumed a `0x16`-byte stride (matching the struct's field offsets)
+and shipped that in the overlay — wrong. It read `SPECIES_TREECKO` (index 0)
+fine, since offset 0 needs no stride, but every other index was misaligned,
+making `evolutionTarget` reads (and hence "evolution line fully caught" /
+`baseWeight`) subtly wrong except at index 0. Caught by cross-checking
+species index 1 (Grovyle) with `lua/diagnostics/species_info_check.lua`: its
+name landed 2 bytes later than `0x16` would predict, confirming `0x18`.
+Lesson: always verify struct array strides against a second element, not just
+the base address against the first.
 
 ## Known gaps
 
