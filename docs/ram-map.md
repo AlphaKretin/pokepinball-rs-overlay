@@ -168,6 +168,39 @@ All on `PinballGame` (base `0x02000000`), lower priority than the above:
 | `bonusMultiplier` | `0x62F` | |
 | `bonusSubtotal` / `bonusCategoryScore` / `totalBonusScore` | `0x630` / `0x634` / `0x544` | bonus-stage scoring |
 
+## Wild spawn pool (static ROM data)
+
+`gWildMonLocations`: ROM, `data/mon_locations.inc:1`, abs `0x08055A84`.
+Shape `[AREA_COUNT=14][2][8]` of `u16` `SPECIES_*` values (`species.h`
+numbering, `SPECIES_NONE`-padded when a row has fewer than 8 entries).
+Area-major, then a "two arrows" row (index 0, used whenever `catchModeArrows`
+is 0/1/2), then a "three arrows" row (index 1, used only when all three GET
+arrows are lit). `catchModeArrows`: `PinballGame` offset `0x73D`.
+
+Row address: `0x08055A84 + (area * 2 + (threeArrowsLit and 1 or 0)) * 16`.
+
+This is the **structural pool only** — which species can possibly spawn, not
+weighted by how likely each one is. Actual pick probability is computed by
+`BuildSpeciesWeightsForCatchEmMode()` (`src/main_board_catch_hatch_picker.c:156-249`)
+into `PinballGame.speciesWeights[25]` (offset `0x130`, cumulative) /
+`totalWeight` (offset `0x12E`), factoring in dex-progress weighting
+(`gCommonAndEggWeights` = `{10, 10, 15, 15, 2}` for
+unseen/seen/shared/shared+seen/caught, `data/rom_2.s:4276-4277`), a hardcoded
+rare-species set with E-Reader-bonus doubling, an evolution-chain max-weight
+lookup, and a no-repeat rule against `lastCatchSpecies`. Deliberately not
+reimplemented in Lua — that table is only valid/populated once catch mode has
+actually been entered (same staleness caveat as `currentSpecies` above), so
+it can't be used for pre-catch planning anyway. If weights are wanted later,
+read `speciesWeights[]`/`totalWeight` live while `boardState == 4`, gated the
+same way as the `currentSpecies` fix.
+
+There's also a separate hidden legendary/bonus-species branch (Chikorita,
+Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in
+`PickSpeciesForCatchEmMode()` (lines 282-333) that bypasses
+`gWildMonLocations` entirely — roughly 1-in-50/1-in-100 odds, gated behind
+`caughtMonCount >= 5` and a `gBoardConfig` species-caught-count threshold not
+yet located. Not reflected in the pool listing.
+
 ## Known gaps
 
 Things not yet confirmed from source reading — either need more digging in
