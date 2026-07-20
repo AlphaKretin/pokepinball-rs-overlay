@@ -54,6 +54,20 @@ AreaNames = {
 	"Ruin (Ruby)", "Ruin (Sapphire)",
 }
 
+-- gAreaPortraitIndexes (data/rom_1.s:622-625): area index -> location icon.
+-- Ruin Ruby/Sapphire share one asset (the game reuses the same portrait for
+-- both); every other area already has a distinct Ruby/Sapphire icon. Files
+-- extracted from the ROM's gPortraitGenericGraphics/gPortraitGenericPalettes
+-- (0x0848D68C / 0x081C00E4) into lua/images/areas/ -- see docs/ram-map.md.
+AreaIconFiles = {
+	"forest_ruby_icon.png", "forest_sapphire_icon.png",
+	"plains_ruby_icon.png", "plains_sapphire_icon.png",
+	"ocean_ruby_icon.png", "ocean_sapphire_icon.png",
+	"cave_ruby_icon.png", "cave_sapphire_icon.png",
+	"safari_zone_icon.png", "volcano_icon.png", "lake_icon.png",
+	"wilderness_icon.png", "ruin_icon.png", "ruin_icon.png",
+}
+
 -- gMain.selectedField / tempField
 FieldNames = { "Ruby", "Sapphire" }
 

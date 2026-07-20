@@ -14,11 +14,7 @@ local GMAIN = 0x0200B0C0
 local ADDR_POKEDEX_FLAGS = GMAIN + 0x74 -- [NUM_SPECIES], one byte per species
 
 local PINBALL_GAME = 0x02000000
-local ADDR_BOARD_STATE = PINBALL_GAME + 0x013
 local ADDR_AREA = PINBALL_GAME + 0x035
-local ADDR_CATCH_MODE_ARROWS = PINBALL_GAME + 0x73D
-local ADDR_TOTAL_WEIGHT = PINBALL_GAME + 0x12E
-local ADDR_SPECIES_WEIGHTS = PINBALL_GAME + 0x130 -- s16[25], cumulative; only [0..7] are meaningful in catch-em mode
 local ADDR_SELECTED_FIELD = GMAIN + 0x04 -- FIELD_RUBY=0 / FIELD_SAPPHIRE=1
 
 -- Travel mode ("go left" / "go right" between areas) resolves its two
@@ -50,8 +46,6 @@ local AREA_VISIT_COUNT_FORCES_RUIN = 5
 local ADDR_AREA_ROULETTE_TABLE = 0x08055A68
 local AREA_ROULETTE_TABLE_SLOTS = 7
 local AREA_ROULETTE_RUIN_SLOT = 6
-
-local MAIN_BOARD_STATE_CATCH_EM_MODE = 4
 
 -- gWildMonLocations: ROM data, [14 areas][2 arrow-states][8 slots] of u16
 -- SPECIES_* values, SPECIES_NONE-padded. Area-major, then two-arrows row,
@@ -104,15 +98,48 @@ local PORTRAIT_W, PORTRAIT_H = 48, 32
 local GRID_COLUMNS = 3
 local CELL_GAP = 3
 local CELL_W = PORTRAIT_W + CELL_GAP
-local CELL_H = PORTRAIT_H + CELL_GAP + 8 -- +8 for optional pct text below
+local CELL_H = PORTRAIT_H + CELL_GAP
 local PORTRAIT_DIR = "images/portraits/"
+local GRID_MAX_ROWS = 3 -- ceil(9 / GRID_COLUMNS); 9 is the real max pool size (area index 3)
 
-local RIGHT_PAD = GRID_COLUMNS * CELL_W + 8
+-- Travel diagram (bottom of the side panel): current area's icon at
+-- bottom-center, arrows fanning up-left/up-right to the two travel
+-- destinations (see readTravelOptions), each icon captioned with its CD
+-- progress. Icons are the same 48x32 native size as the spawn-pool
+-- portraits, for the same no-lossy-resize reason. Top-row captions sit
+-- above their icons (not below) so the arrows can run straight from the
+-- bottom icon to the top icons without a caption in the way.
+local AREA_ICON_DIR = "images/areas/"
+local ARROW_GAP = 14 -- vertical space between the two icon rows
+local TRAVEL_DIAGRAM_GAP = 4 -- above the diagram, below the spawn-pool grid
+local TRAVEL_DIAGRAM_HEIGHT = LINE_HEIGHT + PORTRAIT_H + ARROW_GAP + PORTRAIT_H + LINE_HEIGHT
 
--- DOWN_PAD is picked (not derived from grid content, which needs far less)
--- to keep the panel's overall shape close to the established ~16:9 target:
--- (SCREEN_WIDTH + RIGHT_PAD) / (SCREEN_HEIGHT + DOWN_PAD) ~= 16/9.
-local DOWN_PAD = math.floor((SCREEN_WIDTH + RIGHT_PAD) * 9 / 16) - SCREEN_HEIGHT
+local PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN = 4, 4
+
+-- Canvas aspect ratio is a deliberate, durable project goal (~16:9 for the
+-- full extended play area: native screen + panel) -- see CLAUDE.md. It's
+-- been dropped twice now under the assumption it was just an arbitrary
+-- one-off heuristic, so: when panel content needs more vertical room than
+-- RIGHT_PAD currently supports at 16:9, widen RIGHT_PAD (not just
+-- DOWN_PAD) so the canvas grows in both dimensions and stays ~16:9,
+-- instead of stretching the panel tall and narrow.
+local TARGET_ASPECT_W, TARGET_ASPECT_H = 16, 9
+
+-- What the panel content actually needs, independent of the aspect-ratio
+-- goal: grid width (fixed, 3 columns), and full panel height (worst-case
+-- grid rows so the layout never shifts between areas, plus the diagram).
+local CONTENT_MIN_RIGHT_PAD = GRID_COLUMNS * CELL_W + 8
+local CONTENT_MIN_PANEL_HEIGHT = PANEL_TOP_MARGIN + GRID_MAX_ROWS * CELL_H
+	+ TRAVEL_DIAGRAM_GAP + TRAVEL_DIAGRAM_HEIGHT + PANEL_BOTTOM_MARGIN
+
+-- Widen RIGHT_PAD past the grid's own minimum only if a 16:9 canvas at
+-- CONTENT_MIN_PANEL_HEIGHT would otherwise be narrower than the content
+-- needs. Then DOWN_PAD is whatever keeps the *final* RIGHT_PAD at 16:9 --
+-- by construction that's always >= CONTENT_MIN_PANEL_HEIGHT, so nothing
+-- gets clipped.
+local ratioRightPad = math.ceil(CONTENT_MIN_PANEL_HEIGHT * TARGET_ASPECT_W / TARGET_ASPECT_H) - SCREEN_WIDTH
+local RIGHT_PAD = math.max(CONTENT_MIN_RIGHT_PAD, ratioRightPad)
+local DOWN_PAD = math.ceil((SCREEN_WIDTH + RIGHT_PAD) * TARGET_ASPECT_H / TARGET_ASPECT_W) - SCREEN_HEIGHT
 
 client.SetGameExtraPadding(0, 0, RIGHT_PAD, DOWN_PAD)
 
@@ -138,13 +165,6 @@ end
 local function portraitPath(name)
 	local key = name:lower():gsub("[ '.]", "")
 	return PORTRAIT_DIR .. key .. "_portrait.png"
-end
-
--- AreaNames disambiguates Ruby/Sapphire for data indexing, but the current
--- field is always visible in-game, so strip the suffix for display.
-local function shortAreaName(name)
-	local stripped = name:gsub(" %(Ruby%)", ""):gsub(" %(Sapphire%)", "")
-	return stripped
 end
 
 local function isCaught(species)
@@ -275,28 +295,8 @@ local function readAreaCdProgress(area)
 	return caughtCount, #expanded
 end
 
--- Species pool for an area, combined across both arrow-states. When
--- withWeights is true (MAIN_BOARD_STATE_CATCH_EM_MODE), each entry also gets
--- the game's own live pick-chance % from PinballGame.speciesWeights[], only
--- for species in the currently-active arrows row (the inactive row isn't
--- selectable right now, so a % for it would be meaningless).
-local function readSpawnPool(area, threeArrowsLit, withWeights)
-	local pctBySpecies = {}
-	if withWeights then
-		local activeRowIndex = threeArrowsLit and 1 or 0
-		local activeRowAddr = ADDR_WILD_MON_LOCATIONS + (area * 2 + activeRowIndex) * WILD_MON_ROW_BYTES
-		local totalWeight = Memory.readword(ADDR_TOTAL_WEIGHT)
-		local prevCumWeight = 0
-		for slot = 0, WILD_MON_SLOTS_PER_ROW - 1 do
-			local species = Memory.readword(activeRowAddr + slot * 2)
-			local cumWeight = Memory.readword(ADDR_SPECIES_WEIGHTS + slot * 2)
-			if totalWeight > 0 and species < NUM_SPECIES then
-				pctBySpecies[species] = (cumWeight - prevCumWeight) / totalWeight * 100
-			end
-			prevCumWeight = cumWeight
-		end
-	end
-
+-- Species pool for an area, combined across both arrow-states.
+local function readSpawnPool(area)
 	local pool = {}
 	for _, entry in ipairs(readAreaSpeciesRows(area)) do
 		local exclusive = "-"
@@ -311,7 +311,6 @@ local function readSpawnPool(area, threeArrowsLit, withWeights)
 			caught = isCaught(entry.species),
 			lineCaught = isEvolutionLineCaught(entry.species),
 			rare = RARE_SPECIES[entry.species] or false,
-			pct = withWeights and pctBySpecies[entry.species] or nil,
 		}
 	end
 	return pool
@@ -386,22 +385,88 @@ local function drawPortraitCell(x, y, entry)
 	elseif exclusiveColor then
 		drawMarker(x - 2, y - 2, exclusiveColor)
 	end
+end
 
-	if entry.pct then
-		gui.drawText(x, y + PORTRAIT_H, string.format("%.0f%%", entry.pct), "white", nil, 7)
+local function areaIconPath(areaIndex)
+	return AREA_ICON_DIR .. AreaIconFiles[areaIndex + 1]
+end
+
+local function roundPx(v)
+	return math.floor(v + 0.5)
+end
+
+-- Every coordinate is rounded to a pixel before gui.drawLine sees it, and
+-- the two calls in drawTravelDiagram are fed exact integer mirror images of
+-- each other rather than each computing its own geometry independently --
+-- both matter for the pair to render as true reflections: at this
+-- resolution, two arrows with the "same" geometry but computed separately
+-- can each round their floats to a different pixel and end up visibly
+-- lopsided.
+local function drawArrow(x1, y1, x2, y2, color)
+	x1, y1, x2, y2 = roundPx(x1), roundPx(y1), roundPx(x2), roundPx(y2)
+	gui.drawLine(x1, y1, x2, y2, color)
+	local dx, dy = x2 - x1, y2 - y1
+	local len = math.sqrt(dx * dx + dy * dy)
+	if len == 0 then
+		return
 	end
+	local ux, uy = dx / len, dy / len
+	local px, py = -uy, ux
+	local headLen, headWidth = 5, 3
+	local bx, by = x2 - ux * headLen, y2 - uy * headLen
+	gui.drawLine(x2, y2, roundPx(bx + px * headWidth), roundPx(by + py * headWidth), color)
+	gui.drawLine(x2, y2, roundPx(bx - px * headWidth), roundPx(by - py * headWidth), color)
+end
+
+-- Caption above, icon below -- so the arrow arriving from below can run
+-- straight into the icon's bottom edge with nothing in between.
+local function drawDestinationIcon(x, y, areaIndex, cdCount, total)
+	gui.drawText(x, y, cdCount .. "/" .. total, "white")
+	gui.drawImage(areaIconPath(areaIndex), x, y + LINE_HEIGHT, PORTRAIT_W, PORTRAIT_H)
+end
+
+-- Current area's icon at bottom-center, captioned below it; arrows fan
+-- up-left/up-right from points 1/5 and 4/5 along its top edge (not its
+-- center -- two arrows sharing one origin point read as a single split
+-- arrow rather than a pair) to the two travel destinations
+-- (readTravelOptions), icons at the arrow tips.
+local ARROW_START_INSET = PORTRAIT_W / 5
+
+local function drawTravelDiagram(x, y, width, areaIndex, areaCdCount, areaTotal,
+	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
+	local leftX = x
+	local rightX = x + width - PORTRAIT_W
+	local centerX = x + (width - PORTRAIT_W) / 2
+	local topIconY = y + LINE_HEIGHT
+	local bottomIconY = topIconY + PORTRAIT_H + ARROW_GAP
+
+	drawDestinationIcon(leftX, y, leftAreaIndex, leftCdCount, leftTotal)
+	drawDestinationIcon(rightX, y, rightAreaIndex, rightCdCount, rightTotal)
+	gui.drawImage(areaIconPath(areaIndex), centerX, bottomIconY, PORTRAIT_W, PORTRAIT_H)
+	gui.drawText(centerX, bottomIconY + PORTRAIT_H, areaCdCount .. "/" .. areaTotal, "white")
+
+	-- Right arrow's true geometry, rounded once; the left arrow is its
+	-- exact mirror about the diagram's vertical axis, not a separate
+	-- computation -- see drawArrow.
+	local axisX = roundPx(centerX + PORTRAIT_W / 2)
+	local startY = roundPx(bottomIconY)
+	local endY = roundPx(topIconY + PORTRAIT_H)
+	local rightStartX = roundPx(centerX + PORTRAIT_W - ARROW_START_INSET)
+	local rightEndX = roundPx(rightX + PORTRAIT_W / 2)
+
+	drawArrow(rightStartX, startY, rightEndX, endY, "white")
+	drawArrow(2 * axisX - rightStartX, startY, 2 * axisX - rightEndX, endY, "white")
 end
 
 -- Right of the game screen, extending down to cover the bottom-right
--- corner: current-encounter info.
-local function drawSidePanel(area, areaCdCount, areaTotal, pool, leftArea, leftCdCount, leftTotal, rightArea, rightCdCount, rightTotal)
+-- corner: current-encounter info. No area-name header -- the travel
+-- diagram's own current-area icon already shows which area this is.
+local function drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
+	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 	local x, y = SCREEN_WIDTH + 4, 4
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
 
 	gui.drawRectangle(SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
-
-	gui.drawText(x, y, shortAreaName(area) .. " " .. areaCdCount .. "/" .. areaTotal, "white")
-	y = y + LINE_HEIGHT * 1.5
 
 	local rows = 0
 	for i, entry in ipairs(pool) do
@@ -412,14 +477,10 @@ local function drawSidePanel(area, areaCdCount, areaTotal, pool, leftArea, leftC
 		local cellY = y + row * CELL_H
 		drawPortraitCell(cellX, cellY, entry)
 	end
-	y = y + rows * CELL_H + LINE_HEIGHT * 0.5
+	y = y + rows * CELL_H + TRAVEL_DIAGRAM_GAP
 
-	-- Travel destinations, below the grid: which area you'd land in going
-	-- left vs. right from here, plus each one's own CD progress, so you can
-	-- tell at a glance which direction is worth heading toward.
-	gui.drawText(x, y, "<- " .. shortAreaName(leftArea) .. " " .. leftCdCount .. "/" .. leftTotal, "white")
-	y = y + LINE_HEIGHT
-	gui.drawText(x, y, "-> " .. shortAreaName(rightArea) .. " " .. rightCdCount .. "/" .. rightTotal, "white")
+	drawTravelDiagram(x, y, RIGHT_PAD - 8, areaIndex, areaCdCount, areaTotal,
+		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 end
 
 -- Below the game screen only (side panel claims the corner): persistent
@@ -434,20 +495,16 @@ end
 
 local function drawOverlay()
 	local areaIndex = Memory.readbyte(ADDR_AREA)
-	local area = AreaNames[areaIndex + 1] or "?"
-	local threeArrowsLit = Memory.readbyte(ADDR_CATCH_MODE_ARROWS) == 3
-	local inCatchEmMode = Memory.readbyte(ADDR_BOARD_STATE) == MAIN_BOARD_STATE_CATCH_EM_MODE
-	local pool = readSpawnPool(areaIndex, threeArrowsLit, inCatchEmMode)
+	local pool = readSpawnPool(areaIndex)
 	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 
 	local leftAreaIndex, rightAreaIndex = readTravelOptions()
-	local leftArea = AreaNames[leftAreaIndex + 1] or "?"
-	local rightArea = AreaNames[rightAreaIndex + 1] or "?"
 	local leftCdCount, leftTotal = readAreaCdProgress(leftAreaIndex)
 	local rightCdCount, rightTotal = readAreaCdProgress(rightAreaIndex)
 
-	drawSidePanel(area, areaCdCount, areaTotal, pool, leftArea, leftCdCount, leftTotal, rightArea, rightCdCount, rightTotal)
+	drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
+		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 	drawBottomBar(caught)
 end
 
