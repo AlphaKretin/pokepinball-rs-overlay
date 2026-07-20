@@ -1,11 +1,23 @@
 -- Pokedex-completion overlay for Pokemon Pinball: Ruby & Sapphire, for use
 -- with BizHawk's mGBA core. See docs/ram-map.md for the addresses used here.
 --
--- Canvas wraps the native 240x160 GBA screen with a side panel (right of the
--- screen, full canvas height -- takes the bottom-right corner) for
--- current-encounter info, and a bottom bar (below the screen, only as wide
--- as the screen itself) for persistent totals. Only shows info that isn't
--- already visible in the game's own UI.
+-- Canvas wraps the native 240x160 GBA screen with a left panel (field-wide
+-- egg-hatch pool), a right panel (right of the screen, full canvas height --
+-- takes the bottom-right corner, current-encounter info), and a bottom bar
+-- (between the two side panels, only as wide as the screen itself) for
+-- persistent totals. Only shows info that isn't already visible in the
+-- game's own UI.
+--
+-- IMPORTANT: gui.draw* coordinates are relative to the *padded canvas's*
+-- own top-left (0,0), not the game screen's -- client.SetGameExtraPadding
+-- shifts the emulated screen itself right/down by (LEFT_PAD, TOP_PAD)
+-- within that canvas, it doesn't move the drawing origin. Confirmed live in
+-- BizHawk (LEFT_PAD used to be assumed screen-relative -- i.e. drawing the
+-- left panel at negative x, and the right panel/bottom bar at x=0/
+-- x=SCREEN_WIDTH -- which put the left panel entirely off-canvas and the
+-- right panel drawing over the middle of the shifted game screen instead of
+-- the actual padding area). GAME_X below is the correction: every
+-- game-relative draw call needs to add it now that LEFT_PAD is nonzero.
 
 dofile("Memory.lua")
 dofile("Data.lua")
@@ -53,6 +65,27 @@ local AREA_ROULETTE_RUIN_SLOT = 6
 local ADDR_WILD_MON_LOCATIONS = 0x08055A84
 local WILD_MON_SLOTS_PER_ROW = 8
 local WILD_MON_ROW_BYTES = WILD_MON_SLOTS_PER_ROW * 2
+
+-- gEggLocations: ROM data, [2 fields][26 slots] of u16 SPECIES_* values,
+-- field-major (Ruby row, then Sapphire). Not linker-annotated in source
+-- (src/data/egg_locations.h is plain C data, unlike gWildMonLocations'
+-- data/mon_locations.inc) -- address found empirically, same approach as
+-- ADDR_SPECIES_INFO below: hex-searched the ROM for the Ruby row's first 10
+-- species IDs as a little-endian u16 sequence, found a unique match, then
+-- confirmed the following 52 halfwords match both full field rows from the
+-- decomp source exactly. See docs/ram-map.md and .claude/plans/
+-- egg-hatch-panel.md for the search itself.
+--
+-- Only slots 0-24 are real per-field spawns -- BuildSpeciesWeightsForEggMode
+-- only loops `i < 25`, matching AREA_VISIT_COUNT_FORCES_RUIN-style ROM
+-- lookahead elsewhere in this file. Slot 25 is Pichu, present in the data
+-- but unused by that loop (Pichu is a separate forced-rare pick, not a
+-- table-driven spawn) -- deliberately not read here, see the plan doc for
+-- why Pichu/other forced-rare specials are out of scope for this feature.
+local ADDR_EGG_LOCATIONS = 0x086A4A38
+local EGG_LOCATIONS_ROW_SLOTS = 26
+local EGG_LOCATIONS_ROW_BYTES = EGG_LOCATIONS_ROW_SLOTS * 2
+local EGG_POOL_SIZE = 25
 
 -- gSpeciesInfo: ROM data, struct PokemonSpecies[NUM_SPECIES]. Address found
 -- empirically (not linker-annotated in source): hex-searched ROM for
@@ -114,34 +147,80 @@ local ARROW_GAP = 14 -- vertical space between the two icon rows
 local TRAVEL_DIAGRAM_GAP = 4 -- above the diagram, below the spawn-pool grid
 local TRAVEL_DIAGRAM_HEIGHT = LINE_HEIGHT + PORTRAIT_H + ARROW_GAP + PORTRAIT_H + LINE_HEIGHT
 
+-- Egg-hatch grid (left panel): field-wide (not area-scoped, see
+-- egg-hatch-panel plan), so it lives in its own flange rather than the
+-- right panel. Icons sourced from reference/pokepinballrs/graphics/
+-- mon_hatch_sprites/*.png via python/extract_egg_hatch_icons.py -- 24x24
+-- native size (frame 0 of each source sheet), same no-lossy-resize
+-- reasoning as the portrait grid. Exactly 25 real per-field egg spawns
+-- (EGG_POOL_SIZE) makes a clean 5x5 grid with no leftover slot -- Pichu
+-- (the table's 26th, unused slot) is deliberately excluded, see the plan.
+local EGG_ICON_W, EGG_ICON_H = 24, 24
+local EGG_GRID_COLUMNS = 5
+local EGG_CELL_GAP = 3
+local EGG_CELL_W = EGG_ICON_W + EGG_CELL_GAP
+local EGG_CELL_H = EGG_ICON_H + EGG_CELL_GAP
+local EGG_ICON_DIR = "images/egg_hatch/"
+local EGG_GRID_ROWS = math.ceil(EGG_POOL_SIZE / EGG_GRID_COLUMNS)
+
 local PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN = 4, 4
 
 -- Canvas aspect ratio is a deliberate, durable project goal (~16:9 for the
--- full extended play area: native screen + panel) -- see CLAUDE.md. It's
--- been dropped twice now under the assumption it was just an arbitrary
--- one-off heuristic, so: when panel content needs more vertical room than
--- RIGHT_PAD currently supports at 16:9, widen RIGHT_PAD (not just
--- DOWN_PAD) so the canvas grows in both dimensions and stays ~16:9,
--- instead of stretching the panel tall and narrow.
+-- full extended play area: native screen + both side panels) -- see
+-- CLAUDE.md. It's been dropped twice now under the assumption it was just
+-- an arbitrary one-off heuristic, so: when panel content needs more room
+-- than the current padding supports at 16:9, widen the padding (not just
+-- stretch one dimension) so the canvas grows in both dimensions and stays
+-- ~16:9.
 local TARGET_ASPECT_W, TARGET_ASPECT_H = 16, 9
 
--- What the panel content actually needs, independent of the aspect-ratio
--- goal: grid width (fixed, 3 columns), and full panel height (worst-case
--- grid rows so the layout never shifts between areas, plus the diagram).
+-- What each panel's content actually needs, independent of the aspect-ratio
+-- goal. Right panel: grid width (fixed, 3 columns), and full panel height
+-- (worst-case grid rows so the layout never shifts between areas, plus the
+-- diagram). Left panel: the 5x5 egg grid, no other content.
 local CONTENT_MIN_RIGHT_PAD = GRID_COLUMNS * CELL_W + 8
-local CONTENT_MIN_PANEL_HEIGHT = PANEL_TOP_MARGIN + GRID_MAX_ROWS * CELL_H
+local CONTENT_MIN_RIGHT_PANEL_HEIGHT = PANEL_TOP_MARGIN + GRID_MAX_ROWS * CELL_H
 	+ TRAVEL_DIAGRAM_GAP + TRAVEL_DIAGRAM_HEIGHT + PANEL_BOTTOM_MARGIN
+local CONTENT_MIN_LEFT_PAD = EGG_GRID_COLUMNS * EGG_CELL_W + 8
+local CONTENT_MIN_LEFT_PANEL_HEIGHT = PANEL_TOP_MARGIN + EGG_GRID_ROWS * EGG_CELL_H + PANEL_BOTTOM_MARGIN
 
--- Widen RIGHT_PAD past the grid's own minimum only if a 16:9 canvas at
--- CONTENT_MIN_PANEL_HEIGHT would otherwise be narrower than the content
--- needs. Then DOWN_PAD is whatever keeps the *final* RIGHT_PAD at 16:9 --
--- by construction that's always >= CONTENT_MIN_PANEL_HEIGHT, so nothing
--- gets clipped.
-local ratioRightPad = math.ceil(CONTENT_MIN_PANEL_HEIGHT * TARGET_ASPECT_W / TARGET_ASPECT_H) - SCREEN_WIDTH
-local RIGHT_PAD = math.max(CONTENT_MIN_RIGHT_PAD, ratioRightPad)
-local DOWN_PAD = math.ceil((SCREEN_WIDTH + RIGHT_PAD) * TARGET_ASPECT_H / TARGET_ASPECT_W) - SCREEN_HEIGHT
+-- Two side panels means two independent content-driven width minimums
+-- (unlike the single-RIGHT_PAD solve this replaces) sharing one
+-- content-driven height minimum -- both panels span the full canvas height,
+-- corner to corner, so whichever panel needs more height governs; their
+-- heights are not additive. See .claude/plans/egg-hatch-panel.md for the
+-- full reasoning (in short: growing a panel's height is far more expensive
+-- under 16:9 than growing its width -- 16/9 vs 9/16 -- so a second side
+-- panel sized to its own narrower content beats stacking more height onto
+-- one already-tall panel).
+local minCanvasHeight = math.max(CONTENT_MIN_RIGHT_PANEL_HEIGHT, CONTENT_MIN_LEFT_PANEL_HEIGHT)
+local minCanvasWidth = SCREEN_WIDTH + CONTENT_MIN_LEFT_PAD + CONTENT_MIN_RIGHT_PAD
+local widthForRatio = math.ceil(minCanvasHeight * TARGET_ASPECT_W / TARGET_ASPECT_H)
+local finalWidth = math.max(minCanvasWidth, widthForRatio)
+local finalHeight = math.ceil(finalWidth * TARGET_ASPECT_H / TARGET_ASPECT_W)
 
-client.SetGameExtraPadding(0, 0, RIGHT_PAD, DOWN_PAD)
+-- If the ratio needed more width than either panel's own content asked for,
+-- split the extra evenly between LEFT_PAD/RIGHT_PAD (floor/ceil so the two
+-- halves still sum exactly to the leftover) rather than handing it all to
+-- one side -- keeps growth, and therefore leftover blank space, matched on
+-- both panels so neither one looks like it's floating off-balance.
+local widthSlack = finalWidth - minCanvasWidth
+local LEFT_PAD = CONTENT_MIN_LEFT_PAD + math.floor(widthSlack / 2)
+local RIGHT_PAD = CONTENT_MIN_RIGHT_PAD + math.ceil(widthSlack / 2)
+local DOWN_PAD = finalHeight - SCREEN_HEIGHT
+
+-- No panel has needed top padding so far -- named rather than inlined as a
+-- literal 0 in SetGameExtraPadding/GAME_Y below since that's very much not
+-- expected to stay true (a top flange is already under consideration).
+local UP_PAD = 0
+
+client.SetGameExtraPadding(LEFT_PAD, UP_PAD, RIGHT_PAD, DOWN_PAD)
+
+-- Where the actual game screen now sits within the padded canvas -- see the
+-- IMPORTANT note up top. Every draw call that positions itself relative to
+-- the game screen (as opposed to the left panel, which sits entirely to the
+-- left of it at canvas x=0) needs to offset by GAME_X/GAME_Y.
+local GAME_X, GAME_Y = LEFT_PAD, UP_PAD
 
 local function readDexCaughtCount()
 	local caught = 0
@@ -160,11 +239,20 @@ local function speciesName(index)
 	return "-"
 end
 
--- Portrait filenames are the lowercase species name (spaces/apostrophes/dots
--- stripped) plus "_portrait.png", matching lua/images/portraits/.
+-- Shared by portraitPath/eggIconPath: species names -> filename-safe keys
+-- (lowercase, spaces/apostrophes/dots stripped).
+local function imageKey(name)
+	return name:lower():gsub("[ '.]", "")
+end
+
+-- Matches lua/images/portraits/.
 local function portraitPath(name)
-	local key = name:lower():gsub("[ '.]", "")
-	return PORTRAIT_DIR .. key .. "_portrait.png"
+	return PORTRAIT_DIR .. imageKey(name) .. "_portrait.png"
+end
+
+-- Matches lua/images/egg_hatch/ (python/extract_egg_hatch_icons.py).
+local function eggIconPath(name)
+	return EGG_ICON_DIR .. imageKey(name) .. "_hatch.png"
 end
 
 local function isCaught(species)
@@ -316,6 +404,25 @@ local function readSpawnPool(area)
 	return pool
 end
 
+-- The 25 real egg-hatch spawns for the current field (see
+-- ADDR_EGG_LOCATIONS above) -- unlike readSpawnPool, there's no arrow-state
+-- to dedup across (one flat row per field) and no exclusive/rare markers
+-- (neither concept applies to egg mode -- checked, no RARE_SPECIES entry
+-- appears in either field's egg list).
+local function readEggPool(field)
+	local rowAddr = ADDR_EGG_LOCATIONS + field * EGG_LOCATIONS_ROW_BYTES
+	local pool = {}
+	for slot = 0, EGG_POOL_SIZE - 1 do
+		local species = Memory.readword(rowAddr + slot * 2)
+		pool[#pool + 1] = {
+			name = speciesName(species),
+			caught = isCaught(species),
+			lineCaught = isEvolutionLineCaught(species),
+		}
+	end
+	return pool
+end
+
 -- A colored border around a caught species' portrait, instead of a
 -- translucent dim overlay: dimming (even with a wide alpha gap between the
 -- two states) read as barely-different at a glance against portraits with
@@ -458,15 +565,47 @@ local function drawTravelDiagram(x, y, width, areaIndex, areaCdCount, areaTotal,
 	drawArrow(2 * axisX - rightStartX, startY, 2 * axisX - rightEndX, endY, "white")
 end
 
+-- No exclusive/rare markers here (see readEggPool) -- just the caught/
+-- line-caught border, same colors/meaning as drawPortraitCell.
+local function drawEggHatchCell(x, y, entry)
+	gui.drawImage(eggIconPath(entry.name), x, y, EGG_ICON_W, EGG_ICON_H)
+
+	local borderColor = BORDER_COLOR_UNCAUGHT
+	if entry.caught then
+		borderColor = entry.lineCaught and BORDER_COLOR_LINE_CAUGHT or BORDER_COLOR_CAUGHT
+	end
+	drawPortraitBorder(x, y, EGG_ICON_W, EGG_ICON_H, borderColor)
+end
+
+-- Left edge of the canvas (x=0 -- see GAME_X), full canvas height, mirroring
+-- the right panel's corner placement. Field-wide egg-hatch pool
+-- (readEggPool) -- unlike the right panel this never changes with travel,
+-- only with a Ruby/Sapphire field switch, which is why it's a separate
+-- flange rather than folded into drawSidePanel (see .claude/plans/
+-- egg-hatch-panel.md).
+local function drawEggPanel(pool)
+	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
+	gui.drawRectangle(0, 0, LEFT_PAD, panelHeight, "white", "black")
+
+	local x, y = 4, 4
+	for i, entry in ipairs(pool) do
+		local col = (i - 1) % EGG_GRID_COLUMNS
+		local row = math.floor((i - 1) / EGG_GRID_COLUMNS)
+		local cellX = x + col * EGG_CELL_W
+		local cellY = y + row * EGG_CELL_H
+		drawEggHatchCell(cellX, cellY, entry)
+	end
+end
+
 -- Right of the game screen, extending down to cover the bottom-right
 -- corner: current-encounter info. No area-name header -- the travel
 -- diagram's own current-area icon already shows which area this is.
 local function drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
 	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
-	local x, y = SCREEN_WIDTH + 4, 4
+	local x, y = GAME_X + SCREEN_WIDTH + 4, 4
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
 
-	gui.drawRectangle(SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
+	gui.drawRectangle(GAME_X + SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
 
 	local rows = 0
 	for i, entry in ipairs(pool) do
@@ -483,19 +622,24 @@ local function drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
 		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 end
 
--- Below the game screen only (side panel claims the corner): persistent
--- totals not otherwise shown in-game.
+-- Below the game screen only, constrained between the two side panels (they
+-- claim the corners): persistent totals not otherwise shown in-game. Drawn
+-- first in drawOverlay so it sits at the lowest z-order -- the side panels
+-- span the full canvas height and are drawn after, so they win at the
+-- corners if anything ever overlaps.
 local function drawBottomBar(caught)
-	local y = SCREEN_HEIGHT + 4
+	local y = GAME_Y + SCREEN_HEIGHT + 4
 
-	gui.drawRectangle(0, SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "white", "black")
+	gui.drawRectangle(GAME_X, GAME_Y + SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "white", "black")
 
-	gui.drawText(4, y, "Dex caught: " .. caught .. "/" .. NUM_SPECIES, "white")
+	gui.drawText(GAME_X + 4, y, "Dex caught: " .. caught .. "/" .. NUM_SPECIES, "white")
 end
 
 local function drawOverlay()
 	local areaIndex = Memory.readbyte(ADDR_AREA)
+	local field = Memory.readbyte(ADDR_SELECTED_FIELD)
 	local pool = readSpawnPool(areaIndex)
+	local eggPool = readEggPool(field)
 	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 
@@ -503,9 +647,10 @@ local function drawOverlay()
 	local leftCdCount, leftTotal = readAreaCdProgress(leftAreaIndex)
 	local rightCdCount, rightTotal = readAreaCdProgress(rightAreaIndex)
 
+	drawBottomBar(caught)
+	drawEggPanel(eggPool)
 	drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
 		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
-	drawBottomBar(caught)
 end
 
 while true do

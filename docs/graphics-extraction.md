@@ -71,3 +71,22 @@ with no per-asset `.4bpp`/`.png` breakdown) can reuse `python/gba_gfx.py`'s
 `width` (i.e. `meta_wide`/`meta_tall`) parameters against a known image
 first, the way Treecko was used above, rather than assuming the same 2x2
 scheme holds for a different asset's dimensions.
+
+## Egg-hatch icons: a simpler case (already-split PNGs)
+
+Not every asset needs the ROM-decoding treatment above.
+`reference/pokepinballrs/graphics/mon_hatch_sprites/*.png` (used by the
+overlay's egg-pool panel) are already split into individual per-species
+files by the decomp, same as `graphics/mon_portraits/*.png` — no ROM
+decoding needed, just image processing. Each file is a 5x3 sheet of 24x24
+animation frames (green chroma-key background, GBA sprite convention:
+palette index 0 = transparent); `python/extract_egg_hatch_icons.py` crops
+frame 0 (top-left, confirmed to be a clean static sprite) and re-keys index
+0 to real alpha transparency.
+
+This script uses Pillow, unlike `gba_gfx.py`'s from-scratch PNG
+reader/writer — that was a deliberate no-dependencies choice for decoding
+raw GBA tile data (simple enough not to need it), but re-processing an
+already-real PNG doesn't benefit from reimplementing a PNG parser by hand.
+Pick whichever fits the task: raw `.incbin` tile data -> `gba_gfx.py`,
+already-split PNGs needing only crop/recolor/rekey -> Pillow.

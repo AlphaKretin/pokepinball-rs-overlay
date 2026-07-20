@@ -250,6 +250,38 @@ Cyndaquil, Totodile, Aerodactyl, Latios-or-Latias) in
 `caughtMonCount >= 5` and a `gBoardConfig` species-caught-count threshold not
 yet located. Not reflected in the pool listing.
 
+## Egg-hatch spawn pool (static ROM data)
+
+`gEggLocations`: ROM, abs `0x086A4A38`. Shape `[MAIN_FIELD_COUNT=2][26]` of
+`u16` `SPECIES_*` values, field-major (Ruby row, then Sapphire). Unlike
+`gWildMonLocations`, this is keyed only by the current field
+(`gMain.selectedField`) — not by area/stage — so it's the same 25 real spawns
+(`BuildSpeciesWeightsForEggMode()`'s loop bound is `i < 25`) regardless of
+where on the board the player currently is. Slot 25 (the 26th entry) is
+Pichu, present in the data but unused by that loop — Pichu is picked via a
+separate forced-rare branch in `PickSpeciesForEggMode()`
+(`src/main_board_catch_hatch_picker.c:413-442`), not read from this table.
+
+Row address: `0x086A4A38 + field * 52`.
+
+Unlike `gWildMonLocations`, this is defined as plain C data
+(`src/data/egg_locations.h`), not hand-placed asm, so it has no `@ 0x08...`
+source address comment either. **Found empirically**: hex-searched the ROM
+for the Ruby row's first 10 species IDs
+(Wurmple/Seedot/Ralts/Shroomish/Whismur/Skitty/Zubat/Aron/Plusle/Minun =
+`13,21,28,33,44,60,62,69,79,80`) as a little-endian `u16` byte sequence —
+unique match at file offset `0x6a4a38`. Confirmed by dumping the following
+52 halfwords and checking them byte-for-byte against both full field rows
+in `src/data/egg_locations.h`.
+
+Weighting (`BuildSpeciesWeightsForEggMode()`,
+`src/main_board_catch_hatch_picker.c:353-411`) mirrors the catch-em weight
+logic — `gCommonAndEggWeights` lookup plus a 2-hop evolution-chain max, an
+Oddish/Vileplume-or-Bellossom field-conditional special case (parallel to
+Gloom's split in catch mode), and a no-repeat rule against `lastEggSpecies`
+— not reimplemented in Lua for the same reasons as the catch-em weights
+above.
+
 ## Portrait / location icon graphics (static ROM data)
 
 `gAreaPortraitIndexes`: ROM, `data/rom_1.s:622-625`, abs `0x08137928`. `s16[14]`,
