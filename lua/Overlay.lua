@@ -1,12 +1,12 @@
 -- Pokedex-completion overlay for Pokemon Pinball: Ruby & Sapphire, for use
 -- with BizHawk's mGBA core. See docs/ram-map.md for the addresses used here.
 --
--- Canvas wraps the native 240x160 GBA screen with a left panel (field-wide
--- egg-hatch pool), a right panel (right of the screen, full canvas height --
--- takes the bottom-right corner, current-encounter info), and a bottom bar
--- (between the two side panels, only as wide as the screen itself) for
--- persistent totals. Only shows info that isn't already visible in the
--- game's own UI.
+-- Canvas wraps the native 240x160 GBA screen with a right panel (full
+-- canvas height -- takes the bottom-right corner, field-wide egg-hatch
+-- pool) and a region below the screen, only as wide as the screen itself
+-- (current-encounter spawn pool). Only shows info that isn't already
+-- visible in the game's own UI. Layout is being actively revisited, see
+-- .claude/plans/overlay-layout-revisit.md.
 --
 -- IMPORTANT: gui.draw* coordinates are relative to the *padded canvas's*
 -- own top-left (0,0), not the game screen's -- client.SetGameExtraPadding
@@ -110,6 +110,16 @@ local MAX_EVOLVABLE_PARTY_SIZE = 16
 
 local NUM_SPECIES = #SpeciesNames
 
+-- The last 4 species.h entries (Chikorita/Cyndaquil/Totodile/Aerodactyl) are
+-- only reachable via e-Reader card scan or Pokedex data trade -- no in-game
+-- path exists for them in single-player (see PickSpeciesForCatchEmMode's
+-- specialMons[] build, which only adds them if their dex flag is already
+-- nonzero -- nothing else ever sets it). Excluded from the displayed dex
+-- total for that reason; still present/indexed in SpeciesNames as normal
+-- (ROM-dictated positions), only DEX_DISPLAY_TOTAL below is affected.
+local NUM_EREADER_ONLY_SPECIES = 4
+local DEX_DISPLAY_TOTAL = NUM_SPECIES - NUM_EREADER_ONLY_SPECIES
+
 -- The hardcoded rare-species set from BuildSpeciesWeightsForCatchEmMode
 -- (src/main_board_catch_hatch_picker.c:176-185), species.h numbering.
 local RARE_SPECIES = {
@@ -124,6 +134,42 @@ local RARE_SPECIES = {
 	[160] = true, -- Wobbuffet
 }
 
+-- Deferred edge-case specials (see .claude/plans/edge-case-mon-tracking.md):
+-- Pichu (rare egg spawn), Latios/Latias (rare catch spawn, field-exclusive),
+-- Groudon/Kyogre (bonus-game reward, field-exclusive), Rayquaza (bonus-game
+-- reward, either field). species.h numbering, matches SpeciesNames order.
+local SPECIES_PICHU = 154
+local SPECIES_LATIAS = 195
+local SPECIES_LATIOS = 196
+local SPECIES_KYOGRE = 197
+local SPECIES_GROUDON = 198
+local SPECIES_RAYQUAZA = 199
+
+-- caughtMonCount: PinballGame+0x5F0, u16, per-game-session catch count (not
+-- a dex total) -- gates both Pichu and Latios/Latias's forced-rare rolls
+-- (PickSpeciesForEggMode/PickSpeciesForCatchEmMode, both require >= 5).
+local ADDR_CAUGHT_MON_COUNT = PINBALL_GAME + 0x5F0
+local RARE_SPECIAL_MIN_CAUGHT_THIS_GAME = 5
+
+-- gBoardConfig.caughtSpeciesCount: not reachable via PINBALL_GAME/GMAIN --
+-- BoardConfig is its own fixed-address EWRAM struct (sym_ewram.txt:574),
+-- holding a *pointer* to PinballGame (BoardConfig+0x0C), not the reverse.
+-- Gates Latios/Latias's forced-rare roll (>= 100) -- no equivalent gate
+-- exists for Pichu, confirmed against PickSpeciesForEggMode.
+local ADDR_BOARD_CONFIG = 0x02031520
+local ADDR_CAUGHT_SPECIES_COUNT = ADDR_BOARD_CONFIG + 0x08
+local LATI_MIN_CAUGHT_SPECIES = 100
+
+-- gMain.eReaderBonuses[EREADER_ENCOUNTER_RATE_UP_CARD]: GMAIN+0x07 (array
+-- base) + index 1. Despite the name, unrelated to Rayquaza specifically --
+-- it's the e-Reader "Encounter Rate Up" card flag, permanently set once
+-- numCompletedBonusStages > 4 (any mix of bonus stages) or via the actual
+-- card scan. Confirmed it swaps Latios/Latias's roll 1%->2% but Pichu's
+-- 2%->1% -- opposite directions on the same flag, reads as an
+-- inverted-constant bug rather than intent. Kept the "Rayquaza flag" name in
+-- comments/UI since that's the working name Luna already uses for it.
+local ADDR_ENCOUNTER_RATE_UP_FLAG = GMAIN + 0x08
+
 local SCREEN_WIDTH = 240
 local SCREEN_HEIGHT = 160
 local LINE_HEIGHT = 14
@@ -134,32 +180,78 @@ local LINE_HEIGHT = 14
 -- software; BizHawk's window zoom afterwards just magnifies whatever pixels
 -- we handed it; it can't recover detail a software resize already threw
 -- away. So native size + BizHawk's own (nearest-neighbor) window zoom is
--- the only combination that stays crisp. 3 columns needs only 3 rows for
--- the real max pool size of 9 (checked against the ROM's gWildMonLocations
--- table), with room to spare below the grid for future features.
+-- the only combination that stays crisp.
 local PORTRAIT_W, PORTRAIT_H = 48, 32
-local GRID_COLUMNS = 3
+-- 4 columns, not 3: per-area distinct pool sizes are 4, 7, 8, or 9 (checked
+-- against the ROM's gWildMonLocations table). At 3 columns, 5 of 14 areas
+-- (the three 7-pools and two 4-pools) got a lonely single-portrait final
+-- row; at 4, only the one true 9-outlier (Plains Sapphire, no natural
+-- "odd one out" species to special-case away) would wrap to a partial 3rd
+-- row, and 8 areas land exactly at a zero-slack 8 (2 full rows). That one
+-- 9-case is handled by widening its last row to 5 instead of adding a 3rd
+-- row (see spawnGridCell) -- worst-case row reserve (GRID_MAX_ROWS below)
+-- is therefore 2, not 3, saving a full row's height off the panel that
+-- reserve drives for every area, not just the 9-case.
+local GRID_COLUMNS = 4
 local CELL_GAP = 3
 local CELL_W = PORTRAIT_W + CELL_GAP
 local CELL_H = PORTRAIT_H + CELL_GAP
 local PORTRAIT_DIR = "images/portraits/"
-local GRID_MAX_ROWS = 3 -- ceil(9 / GRID_COLUMNS); 9 is the real max pool size (area index 3)
+local GRID_MAX_ROWS = 2 -- see spawnGridCell -- the 9-case widens its last row instead of adding a 3rd
 
--- Travel diagram (bottom of the side panel): current area's icon at
--- bottom-center, arrows fanning up-left/up-right to the two travel
--- destinations (see readTravelOptions), each icon captioned with its CD
--- progress. Icons are the same 48x32 native size as the spawn-pool
--- portraits, for the same no-lossy-resize reason. Top-row captions sit
--- above their icons (not below) so the arrows can run straight from the
--- bottom icon to the top icons without a caption in the way.
+-- Travel diagram (bottom of the right flange, beside the spawn-pool grid
+-- below the screen): current area's icon at bottom-center, arrows fanning
+-- up-left/up-right to the two travel destinations (see readTravelOptions),
+-- each icon captioned with its CD progress as a small fraction beside it
+-- (see drawCdStack), not above/below it. Icons are the same 48x32 native
+-- size as the spawn-pool portraits, for the same no-lossy-resize reason.
+-- Drawn at its own natural content width (see TRAVEL_DIAGRAM_WIDTH below),
+-- not stretched to fill the flange -- see .claude/plans/
+-- overlay-layout-revisit.md for why leftover flange width is left blank
+-- rather than handed to the diagram.
 local AREA_ICON_DIR = "images/areas/"
 local ARROW_GAP = 14 -- vertical space between the two icon rows
-local TRAVEL_DIAGRAM_GAP = 4 -- above the diagram, below the spawn-pool grid
-local TRAVEL_DIAGRAM_HEIGHT = LINE_HEIGHT + PORTRAIT_H + ARROW_GAP + PORTRAIT_H + LINE_HEIGHT
+-- No LINE_HEIGHT rows above/below the icons anymore -- CD counts are a
+-- tight fraction beside each icon instead of a caption above/below it (see
+-- drawCdStack), which is what made the diagram taller than the "two rows
+-- of icons" concept alone would suggest.
+local TRAVEL_DIAGRAM_HEIGHT = PORTRAIT_H + ARROW_GAP + PORTRAIT_H
+-- Natural width: two PORTRAIT_W icons plus a gap wide enough for the
+-- fanned arrows between them to read clearly -- matches the width the
+-- diagram used to get for free back when the right flange's content-min
+-- was itself grid-driven (3-column spawn grid), before that content moved
+-- elsewhere.
+local TRAVEL_DIAGRAM_WIDTH = 2 * PORTRAIT_W + 57
+-- Real measured metrics for gui.drawText's default font (Luna measured
+-- these live in BizHawk, at 1x scale): a digit glyph's own visible pixels
+-- are 9px tall, but they don't start right at the y passed to drawText --
+-- there's a further 3px gap above the glyph before its visible pixels
+-- begin. Confirmed via the fraction line: with the naive "row height =
+-- glyph height" model, the numerator-to-line gap measured 2px live while
+-- the line-to-denominator gap measured 5px, a 3px mismatch consistent with
+-- exactly one glyph's worth of this offset applying to the denominator's
+-- draw call but not being accounted for. This offset is a BizHawk
+-- drawText-positioning detail, not padding baked into the font itself
+-- (confirmed no such padding exists vertically, unlike the horizontal
+-- monospacing case CD_CHAR_WIDTH accounts for).
+local CD_GLYPH_HEIGHT = 9
+local CD_GLYPH_Y_OFFSET = 3
+-- Desired visible gap between a glyph's own pixels and the fraction line,
+-- the same on both sides.
+local CD_STACK_LINE_GAP = 2
+-- Per-character advance for BizHawk's default gui.drawText font -- same
+-- font LINE_HEIGHT was originally tuned against. Used to size each
+-- fraction to its actual digit count (rather than a fixed reserved box)
+-- so the gap to the icon comes out the same on both sides regardless of
+-- whether it's showing "9/14" or "13/14" -- a fixed-width reservation on
+-- one side only (an earlier version of this) made that side's text
+-- overflow into the icon on wide numbers while the other side's gap
+-- stayed loose. May need live tuning against the font's actual advance.
+local CD_CHAR_WIDTH = 10
+local CD_STACK_GAP = 2 -- gap between an icon's edge and its fraction
 
--- Egg-hatch grid (left panel): field-wide (not area-scoped, see
--- egg-hatch-panel plan), so it lives in its own flange rather than the
--- right panel. Icons sourced from reference/pokepinballrs/graphics/
+-- Egg-hatch grid (right panel): field-wide (not area-scoped, see
+-- egg-hatch-panel plan). Icons sourced from reference/pokepinballrs/graphics/
 -- mon_hatch_sprites/*.png via python/extract_egg_hatch_icons.py -- 24x24
 -- native size (frame 0 of each source sheet), same no-lossy-resize
 -- reasoning as the portrait grid. Exactly 25 real per-field egg spawns
@@ -173,6 +265,15 @@ local EGG_CELL_H = EGG_ICON_H + EGG_CELL_GAP
 local EGG_ICON_DIR = "images/egg_hatch/"
 local EGG_GRID_ROWS = math.ceil(EGG_POOL_SIZE / EGG_GRID_COLUMNS)
 
+-- Edge-case specials column (right panel, right of the egg grid/travel
+-- diagram content -- see .claude/plans/edge-case-mon-tracking.md). Same
+-- native 48x32 portraits as the spawn grid (already present in
+-- lua/images/portraits/ for all 6 species involved), stacked in one column
+-- rather than a grid since there are only 4 entries.
+local SPECIAL_CELL_GAP = 3
+local SPECIAL_CELL_H = PORTRAIT_H + SPECIAL_CELL_GAP
+local SPECIAL_COLUMN_GAP = 4 -- gap between the egg/travel content and this column
+
 local PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN = 4, 4
 
 -- Canvas aspect ratio is a deliberate, durable project goal (~16:9 for the
@@ -184,39 +285,57 @@ local PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN = 4, 4
 -- ~16:9.
 local TARGET_ASPECT_W, TARGET_ASPECT_H = 16, 9
 
--- What each panel's content actually needs, independent of the aspect-ratio
--- goal. Right panel: grid width (fixed, 3 columns), and full panel height
--- (worst-case grid rows so the layout never shifts between areas, plus the
--- diagram). Left panel: the 5x5 egg grid, no other content.
-local CONTENT_MIN_RIGHT_PAD = GRID_COLUMNS * CELL_W + 8
-local CONTENT_MIN_RIGHT_PANEL_HEIGHT = PANEL_TOP_MARGIN + GRID_MAX_ROWS * CELL_H
-	+ TRAVEL_DIAGRAM_GAP + TRAVEL_DIAGRAM_HEIGHT + PANEL_BOTTOM_MARGIN
-local CONTENT_MIN_LEFT_PAD = EGG_GRID_COLUMNS * EGG_CELL_W + 8
-local CONTENT_MIN_LEFT_PANEL_HEIGHT = PANEL_TOP_MARGIN + EGG_GRID_ROWS * EGG_CELL_H + PANEL_BOTTOM_MARGIN
+-- What each region's content actually needs, independent of the
+-- aspect-ratio goal. Right flange holds the egg-hatch grid (top-anchored)
+-- plus the dex-caught line and the travel diagram (bottom-anchored, beside
+-- the spawn-pool grid which sits below the screen at the same height).
+-- Egg grid's more compact, square shape suits the flange's top far better
+-- than the spawn grid used to (see .claude/plans/overlay-layout-revisit.md
+-- for the full history of this swap).
+-- Unchanged from before the specials column was added: the column doesn't
+-- need its own content-min term. It's top-anchored right next to the egg
+-- grid (SPECIAL_COLUMN_X further down, based on the egg grid's own width,
+-- not this max) and, confirmed live, already fits within the width this
+-- term already reserves for the wider of the two existing terms (the travel
+-- diagram) plus the ~37px of 16:9 ratio slack -- no extra width needed.
+local CONTENT_MIN_RIGHT_PAD = math.max(EGG_GRID_COLUMNS * EGG_CELL_W + 8, TRAVEL_DIAGRAM_WIDTH + 8)
+-- Similarly unaffected: the column's own height (4 * SPECIAL_CELL_H = 137,
+-- + margins = 145) is less than the egg grid's (143)... close, but even the
+-- 2px difference doesn't matter -- minCanvasHeight below is always governed
+-- by the below-screen region (246) either way. Kept as a plain single term,
+-- not maxed against the column, to match "no new content-min term" above.
+local CONTENT_MIN_RIGHT_PANEL_HEIGHT = PANEL_TOP_MARGIN + EGG_GRID_ROWS * EGG_CELL_H + PANEL_BOTTOM_MARGIN
+-- Dex-caught line isn't factored in above: it sits between the egg grid's
+-- bottom and SCREEN_HEIGHT, and that gap (SCREEN_HEIGHT - the egg content
+-- height above) is already >= one text line without needing its own
+-- content-min term -- see drawEggPanel.
+local CONTENT_MIN_SPAWN_HEIGHT = PANEL_TOP_MARGIN + GRID_MAX_ROWS * CELL_H + PANEL_BOTTOM_MARGIN
+local CONTENT_MIN_TRAVEL_HEIGHT = PANEL_TOP_MARGIN + TRAVEL_DIAGRAM_HEIGHT + PANEL_BOTTOM_MARGIN
+-- Spawn grid and travel diagram sit side by side in the same y-band (both
+-- below SCREEN_HEIGHT), so whichever needs more height governs, same
+-- reasoning as the two-flange max used to use.
+local CONTENT_MIN_BELOW_SCREEN_HEIGHT = math.max(CONTENT_MIN_SPAWN_HEIGHT, CONTENT_MIN_TRAVEL_HEIGHT)
+-- No separate below-screen width minimum: its widest possible row (the
+-- merged 5-wide 9-case row, see spawnGridCell) is (GRID_COLUMNS + 1) *
+-- CELL_W + 8 = 263px, which pokes past SCREEN_WIDTH but always lands well
+-- within CONTENT_MIN_RIGHT_PAD's own canvas-width budget below (once
+-- combined with SCREEN_WIDTH) -- deliberate, see drawSpawnPanel.
 
--- Two side panels means two independent content-driven width minimums
--- (unlike the single-RIGHT_PAD solve this replaces) sharing one
--- content-driven height minimum -- both panels span the full canvas height,
--- corner to corner, so whichever panel needs more height governs; their
--- heights are not additive. See .claude/plans/egg-hatch-panel.md for the
--- full reasoning (in short: growing a panel's height is far more expensive
--- under 16:9 than growing its width -- 16/9 vs 9/16 -- so a second side
--- panel sized to its own narrower content beats stacking more height onto
--- one already-tall panel).
-local minCanvasHeight = math.max(CONTENT_MIN_RIGHT_PANEL_HEIGHT, CONTENT_MIN_LEFT_PANEL_HEIGHT)
-local minCanvasWidth = SCREEN_WIDTH + CONTENT_MIN_LEFT_PAD + CONTENT_MIN_RIGHT_PAD
+-- The right flange and the below-screen region no longer share one
+-- height-max the way two side flanges would -- below-screen's height is
+-- additive with the screen's own height instead, so the two candidates for
+-- minCanvasHeight are "right flange's own corner-to-corner height" and
+-- "screen height + spawn-grid/travel-diagram's height stacked beneath it".
+local minCanvasHeight = math.max(CONTENT_MIN_RIGHT_PANEL_HEIGHT,
+	SCREEN_HEIGHT + CONTENT_MIN_BELOW_SCREEN_HEIGHT)
+local minCanvasWidth = SCREEN_WIDTH + CONTENT_MIN_RIGHT_PAD
 local widthForRatio = math.ceil(minCanvasHeight * TARGET_ASPECT_W / TARGET_ASPECT_H)
 local finalWidth = math.max(minCanvasWidth, widthForRatio)
 local finalHeight = math.ceil(finalWidth * TARGET_ASPECT_H / TARGET_ASPECT_W)
 
--- If the ratio needed more width than either panel's own content asked for,
--- split the extra evenly between LEFT_PAD/RIGHT_PAD (floor/ceil so the two
--- halves still sum exactly to the leftover) rather than handing it all to
--- one side -- keeps growth, and therefore leftover blank space, matched on
--- both panels so neither one looks like it's floating off-balance.
-local widthSlack = finalWidth - minCanvasWidth
-local LEFT_PAD = CONTENT_MIN_LEFT_PAD + math.floor(widthSlack / 2)
-local RIGHT_PAD = CONTENT_MIN_RIGHT_PAD + math.ceil(widthSlack / 2)
+-- Only one side flange now, so any ratio-driven width slack goes entirely
+-- to RIGHT_PAD -- no split needed.
+local RIGHT_PAD = CONTENT_MIN_RIGHT_PAD + (finalWidth - minCanvasWidth)
 local DOWN_PAD = finalHeight - SCREEN_HEIGHT
 
 -- No panel has needed top padding so far -- named rather than inlined as a
@@ -224,13 +343,17 @@ local DOWN_PAD = finalHeight - SCREEN_HEIGHT
 -- expected to stay true (a top flange is already under consideration).
 local UP_PAD = 0
 
-client.SetGameExtraPadding(LEFT_PAD, UP_PAD, RIGHT_PAD, DOWN_PAD)
+client.SetGameExtraPadding(0, UP_PAD, RIGHT_PAD, DOWN_PAD)
 
--- Where the actual game screen now sits within the padded canvas -- see the
--- IMPORTANT note up top. Every draw call that positions itself relative to
--- the game screen (as opposed to the left panel, which sits entirely to the
--- left of it at canvas x=0) needs to offset by GAME_X/GAME_Y.
-local GAME_X, GAME_Y = LEFT_PAD, UP_PAD
+-- Where the actual game screen sits within the padded canvas -- see the
+-- IMPORTANT note up top. GAME_X is 0 now that there's no left flange, but
+-- kept named (not inlined) since every game-relative draw call already
+-- expects to add it.
+local GAME_X, GAME_Y = 0, UP_PAD
+
+-- x for the specials column -- see CONTENT_MIN_RIGHT_PAD above, same
+-- leading gap/margin the egg grid itself uses.
+local SPECIAL_COLUMN_X = GAME_X + SCREEN_WIDTH + 4 + EGG_GRID_COLUMNS * EGG_CELL_W + SPECIAL_COLUMN_GAP
 
 local function readDexCaughtCount()
 	local caught = 0
@@ -267,6 +390,21 @@ end
 
 local function isCaught(species)
 	return Memory.readbyte(ADDR_POKEDEX_FLAGS + species) == PokedexFlag.CAUGHT
+end
+
+-- See ADDR_CAUGHT_MON_COUNT/ADDR_CAUGHT_SPECIES_COUNT above for the
+-- eligibility conditions this mirrors.
+local function isPichuEligible()
+	return Memory.readword(ADDR_CAUGHT_MON_COUNT) >= RARE_SPECIAL_MIN_CAUGHT_THIS_GAME
+end
+
+local function isLatiEligible()
+	return Memory.readword(ADDR_CAUGHT_MON_COUNT) >= RARE_SPECIAL_MIN_CAUGHT_THIS_GAME
+		and Memory.readword(ADDR_CAUGHT_SPECIES_COUNT) >= LATI_MIN_CAUGHT_SPECIES
+end
+
+local function isEncounterRateUp()
+	return Memory.readbyte(ADDR_ENCOUNTER_RATE_UP_FLAG) ~= 0
 end
 
 local function evolutionTarget(species)
@@ -413,10 +551,10 @@ local function expandWithEvolutions(speciesList)
 	return expanded
 end
 
--- How many species you'd still need to obtain (by catch or evolution) to get
--- everything catchable in this area to CD: every base species catchable here
--- plus every step of each one's evolution line, vs. how many of those are
--- already caught.
+-- How many species you'd still need to obtain (by catch or evolution) to
+-- get everything catchable in this area to CD: every base species
+-- catchable here plus every step of each one's evolution line, vs. how many
+-- of those are already caught.
 local function readAreaCdProgress(area)
 	local expanded = expandWithEvolutions(readAreaSpeciesSet(area))
 	local caughtCount = 0
@@ -470,6 +608,43 @@ local function readEggPool(field, queueSet)
 	return pool
 end
 
+-- The 4 deferred edge-case specials (see .claude/plans/
+-- edge-case-mon-tracking.md): Pichu, field-appropriate Lati(as/os),
+-- field-appropriate Groudon/Kyogre, Rayquaza. Fixed order/field selection,
+-- not table-driven like readSpawnPool/readEggPool since there are only 4
+-- entries and 2 of them are field-conditional single picks rather than a
+-- ROM-data row.
+local function readSpecials(field)
+	local latiSpecies = (field == 0) and SPECIES_LATIOS or SPECIES_LATIAS
+	local groudonKyogreSpecies = (field == 0) and SPECIES_GROUDON or SPECIES_KYOGRE
+	return {
+		{
+			name = speciesName(SPECIES_PICHU),
+			caught = isCaught(SPECIES_PICHU),
+			lineCaught = isEvolutionLineCaught(SPECIES_PICHU),
+			eligible = isPichuEligible(),
+		},
+		{
+			name = speciesName(latiSpecies),
+			caught = isCaught(latiSpecies),
+			lineCaught = isEvolutionLineCaught(latiSpecies),
+			eligible = isLatiEligible(),
+		},
+		{
+			name = speciesName(groudonKyogreSpecies),
+			caught = isCaught(groudonKyogreSpecies),
+			lineCaught = isEvolutionLineCaught(groudonKyogreSpecies),
+			eligible = false,
+		},
+		{
+			name = speciesName(SPECIES_RAYQUAZA),
+			caught = isCaught(SPECIES_RAYQUAZA),
+			lineCaught = isEvolutionLineCaught(SPECIES_RAYQUAZA),
+			eligible = false,
+		},
+	}
+end
+
 -- A colored border around a caught species' portrait, instead of a
 -- translucent dim overlay: dimming (even with a wide alpha gap between the
 -- two states) read as barely-different at a glance against portraits with
@@ -505,6 +680,23 @@ local function borderColorFor(entry)
 	return BORDER_COLOR_CAUGHT
 end
 
+-- Specials-only tier, one step below "caught" (see readSpecials): a species
+-- with no evolution target already lands on BORDER_COLOR_LINE_CAUGHT the
+-- moment it's caught (isEvolutionLineCaught == isCaught for a species with
+-- no further evolution -- confirmed, no code changes needed in
+-- borderColorFor itself), so this only adds a distinct color for "not
+-- caught yet, but eligible to spawn/roll for" -- Pichu and Lati only, see
+-- readSpecials; Groudon/Kyogre/Rayquaza have eligible always false so this
+-- tier never shows for them.
+local BORDER_COLOR_ELIGIBLE = 0xFFAF52DE
+
+local function specialBorderColorFor(entry)
+	if not entry.caught and entry.eligible then
+		return BORDER_COLOR_ELIGIBLE
+	end
+	return borderColorFor(entry)
+end
+
 -- gui.drawRectangle's width/height are corner-to-corner (the right/bottom
 -- border line lands at x+width, y+height), not a pixel count the way
 -- drawImage's w/h are -- so this only needs +1, not +2, to sit flush
@@ -521,7 +713,6 @@ local MARKER_SIZE = 8
 local RARE_MARKER_COLOR = 0xFFFFD700 -- gold
 local TWO_EXCLUSIVE_MARKER_COLOR = 0xFF2E9BFF -- blue
 local THREE_EXCLUSIVE_MARKER_COLOR = 0xFFFF3B30 -- red
-
 local function drawMarker(x, y, color)
 	gui.drawRectangle(x, y, MARKER_SIZE, MARKER_SIZE, "black", color)
 end
@@ -555,6 +746,15 @@ local function drawPortraitCell(x, y, entry)
 	end
 end
 
+-- No exclusive/rare markers here (that concept doesn't apply to this
+-- column) -- just the eligible/caught/line-caught border
+-- (specialBorderColorFor). The rate-up flag gets one shared icon next to
+-- the dex-caught line instead of a per-mon marker -- see drawEggPanel.
+local function drawSpecialCell(x, y, entry)
+	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
+	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, specialBorderColorFor(entry))
+end
+
 local function areaIconPath(areaIndex)
 	return AREA_ICON_DIR .. AreaIconFiles[areaIndex + 1]
 end
@@ -586,18 +786,44 @@ local function drawArrow(x1, y1, x2, y2, color)
 	gui.drawLine(x2, y2, roundPx(bx - px * headWidth), roundPx(by - py * headWidth), color)
 end
 
--- Caption above, icon below -- so the arrow arriving from below can run
--- straight into the icon's bottom edge with nothing in between.
-local function drawDestinationIcon(x, y, areaIndex, cdCount, total)
-	gui.drawText(x, y, cdCount .. "/" .. total, "white")
-	gui.drawImage(areaIconPath(areaIndex), x, y + LINE_HEIGHT, PORTRAIT_W, PORTRAIT_H)
+-- Caught/total for a travel-diagram icon, as a tight fraction (count over
+-- total, separated by a real drawn line rather than "--" text) beside the
+-- icon instead of a caption above/below it -- see CD_GLYPH_HEIGHT.
+-- onRight places the fraction to the icon's right (against its left edge),
+-- otherwise to its left (against its right edge). Sized to the wider of
+-- the two numbers (via CD_CHAR_WIDTH) rather than a fixed reserved box, so
+-- the narrower number centers over the wider one and the gap to the icon
+-- comes out the same regardless of digit count on either side.
+local function drawCdStack(iconX, iconY, onRight, cdCount, total)
+	local caughtStr, totalStr = tostring(cdCount), tostring(total)
+	local caughtWidth, totalWidth = #caughtStr * CD_CHAR_WIDTH, #totalStr * CD_CHAR_WIDTH
+	local stackWidth = math.max(caughtWidth, totalWidth)
+	local blockX = onRight and (iconX + PORTRAIT_W + CD_STACK_GAP) or (iconX - CD_STACK_GAP - stackWidth)
+
+	-- Drawn-anchor-to-visible-bottom span (2 glyphs + 2 line gaps + one
+	-- glyph's worth of CD_GLYPH_Y_OFFSET, see denomY below) -- used only to
+	-- vertically center the whole fraction within the icon's height.
+	local stackHeight = 2 * CD_GLYPH_HEIGHT + 2 * CD_STACK_LINE_GAP + CD_GLYPH_Y_OFFSET
+	local textY = iconY + (PORTRAIT_H - stackHeight) / 2
+	local lineY = roundPx(textY + CD_GLYPH_Y_OFFSET + CD_GLYPH_HEIGHT + CD_STACK_LINE_GAP)
+	-- denomY is drawn CD_GLYPH_Y_OFFSET earlier than a naive "lineY + gap"
+	-- would suggest, to cancel out that same offset applying again to the
+	-- denominator's own draw call -- see CD_GLYPH_Y_OFFSET.
+	local denomY = lineY + CD_STACK_LINE_GAP - CD_GLYPH_Y_OFFSET
+
+	gui.drawText(blockX + (stackWidth - caughtWidth) / 2, textY, caughtStr, "white")
+	gui.drawLine(blockX, lineY, blockX + stackWidth, lineY, "white")
+	gui.drawText(blockX + (stackWidth - totalWidth) / 2, denomY, totalStr, "white")
 end
 
--- Current area's icon at bottom-center, captioned below it; arrows fan
--- up-left/up-right from points 1/5 and 4/5 along its top edge (not its
--- center -- two arrows sharing one origin point read as a single split
--- arrow rather than a pair) to the two travel destinations
--- (readTravelOptions), icons at the arrow tips.
+-- Current area's icon at bottom-center; arrows fan up-left/up-right from
+-- points 1/5 and 4/5 along its top edge (not its center -- two arrows
+-- sharing one origin point read as a single split arrow rather than a
+-- pair) to the two travel destinations (readTravelOptions), icons at the
+-- arrow tips. Each icon's CD stack sits on its "inside" edge (facing the
+-- diagram's center) -- out of the arrows' way, since they fan from the
+-- bottom icon's top edge, not its sides, so the bottom icon's stack can
+-- also safely go on its right without crossing them.
 local ARROW_START_INSET = PORTRAIT_W / 5
 
 local function drawTravelDiagram(x, y, width, areaIndex, areaCdCount, areaTotal,
@@ -605,13 +831,16 @@ local function drawTravelDiagram(x, y, width, areaIndex, areaCdCount, areaTotal,
 	local leftX = x
 	local rightX = x + width - PORTRAIT_W
 	local centerX = x + (width - PORTRAIT_W) / 2
-	local topIconY = y + LINE_HEIGHT
+	local topIconY = y
 	local bottomIconY = topIconY + PORTRAIT_H + ARROW_GAP
 
-	drawDestinationIcon(leftX, y, leftAreaIndex, leftCdCount, leftTotal)
-	drawDestinationIcon(rightX, y, rightAreaIndex, rightCdCount, rightTotal)
+	gui.drawImage(areaIconPath(leftAreaIndex), leftX, topIconY, PORTRAIT_W, PORTRAIT_H)
+	gui.drawImage(areaIconPath(rightAreaIndex), rightX, topIconY, PORTRAIT_W, PORTRAIT_H)
 	gui.drawImage(areaIconPath(areaIndex), centerX, bottomIconY, PORTRAIT_W, PORTRAIT_H)
-	gui.drawText(centerX, bottomIconY + PORTRAIT_H, areaCdCount .. "/" .. areaTotal, "white")
+
+	drawCdStack(leftX, topIconY, true, leftCdCount, leftTotal)
+	drawCdStack(rightX, topIconY, false, rightCdCount, rightTotal)
+	drawCdStack(centerX, bottomIconY, true, areaCdCount, areaTotal)
 
 	-- Right arrow's true geometry, rounded once; the left arrow is its
 	-- exact mirror about the diagram's vertical axis, not a separate
@@ -633,17 +862,20 @@ local function drawEggHatchCell(x, y, entry)
 	drawPortraitBorder(x, y, EGG_ICON_W, EGG_ICON_H, borderColorFor(entry))
 end
 
--- Left edge of the canvas (x=0 -- see GAME_X), full canvas height, mirroring
--- the right panel's corner placement. Field-wide egg-hatch pool
--- (readEggPool) -- unlike the right panel this never changes with travel,
--- only with a Ruby/Sapphire field switch, which is why it's a separate
--- flange rather than folded into drawSidePanel (see .claude/plans/
--- egg-hatch-panel.md).
-local function drawEggPanel(pool)
+-- Right of the game screen, extending down to cover the bottom-right
+-- corner: field-wide egg-hatch pool (readEggPool, top-anchored) -- unlike
+-- the spawn-pool grid this never changes with travel, only with a
+-- Ruby/Sapphire field switch -- plus the dex-caught line just below it, and
+-- the travel diagram bottom-anchored beside the spawn-pool grid (which sits
+-- below the screen, see drawSpawnPanel). See .claude/plans/
+-- overlay-layout-revisit.md for why the egg grid and spawn grid swapped
+-- which region they live in.
+local function drawEggPanel(pool, specials, caught, rateUp, areaIndex, areaCdCount, areaTotal,
+	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
-	gui.drawRectangle(0, 0, LEFT_PAD, panelHeight, "white", "black")
+	gui.drawRectangle(GAME_X + SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
 
-	local x, y = 4, 4
+	local x, y = GAME_X + SCREEN_WIDTH + 4, 4
 	for i, entry in ipairs(pool) do
 		local col = (i - 1) % EGG_GRID_COLUMNS
 		local row = math.floor((i - 1) / EGG_GRID_COLUMNS)
@@ -651,44 +883,76 @@ local function drawEggPanel(pool)
 		local cellY = y + row * EGG_CELL_H
 		drawEggHatchCell(cellX, cellY, entry)
 	end
+
+	-- Sits in the gap between the egg grid's bottom and SCREEN_HEIGHT --
+	-- see the CONTENT_MIN_RIGHT_PAD comment for why that gap is always big
+	-- enough for one text line without its own content-min term.
+	local dexText = "Dex caught: " .. caught .. "/" .. DEX_DISPLAY_TOTAL
+	local dexTextY = GAME_Y + SCREEN_HEIGHT - LINE_HEIGHT - PANEL_BOTTOM_MARGIN
+	gui.drawText(x, dexTextY, dexText, "white")
+
+	-- Single shared indicator for the rate-up flag -- one global toggle, not
+	-- a per-mon property, so it doesn't belong on the Pichu/Lati portraits
+	-- themselves. Gold, same as RARE_MARKER_COLOR (this flag raises rare-mon
+	-- odds, same "worth prioritizing" meaning), not a dedicated color.
+	-- Player is expected to already know what it means, same as the C/D
+	-- border colors elsewhere.
+	if rateUp then
+		local markerX = x + #dexText * CD_CHAR_WIDTH + 6
+		local markerY = dexTextY + (LINE_HEIGHT - MARKER_SIZE) / 2
+		drawMarker(markerX, markerY, RARE_MARKER_COLOR)
+	end
+
+	local diagramY = GAME_Y + SCREEN_HEIGHT + PANEL_TOP_MARGIN
+	drawTravelDiagram(x, diagramY, TRAVEL_DIAGRAM_WIDTH, areaIndex, areaCdCount, areaTotal,
+		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
+
+	for i, entry in ipairs(specials) do
+		drawSpecialCell(SPECIAL_COLUMN_X, y + (i - 1) * SPECIAL_CELL_H, entry)
+	end
 end
 
--- Right of the game screen, extending down to cover the bottom-right
--- corner: current-encounter info. No area-name header -- the travel
--- diagram's own current-area icon already shows which area this is.
-local function drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
-	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
-	local x, y = GAME_X + SCREEN_WIDTH + 4, 4
-	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
+-- Row/col for spawn-pool grid cell i (1-indexed) of a poolSize-entry pool at
+-- the given column count. Normally a fixed GRID_COLUMNS-wide grid, except:
+-- if the last row would hold exactly one lonely portrait (poolSize mod
+-- columns == 1, e.g. the real 9-pool at 4 columns), that portrait is merged
+-- into the previous row instead -- one row of columns+1 beats reserving a
+-- whole extra row's height for a single cell. Only ever affects the very
+-- last row, so every other row still packs at the fixed column count.
+local function spawnGridCell(i, poolSize, columns)
+	local rows = math.ceil(poolSize / columns)
+	local lastRowStart = (rows - 1) * columns
+	if poolSize - lastRowStart == 1 and rows > 1 then
+		rows = rows - 1
+		lastRowStart = lastRowStart - columns
+	end
+	local idx = i - 1
+	if idx >= lastRowStart then
+		return rows - 1, idx - lastRowStart
+	end
+	return math.floor(idx / columns), idx % columns
+end
 
-	gui.drawRectangle(GAME_X + SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
+-- The merged last row (see spawnGridCell) can run one cell wider than
+-- GRID_COLUMNS, which pokes past the panel's own background rectangle into
+-- the egg panel's -- deliberate, not a bug: there's plenty of canvas width
+-- there (RIGHT_PAD's ratio-driven slack always exceeds one cell), and the
+-- border between the two panels isn't meant to stay a hard visual wall
+-- long-term anyway. It only overlaps the egg panel's *background*, not its
+-- content -- the travel diagram (the only thing drawn low enough in that
+-- panel to be at risk) only places its bottom-row icon at TRAVEL_DIAGRAM_
+-- WIDTH's horizontal center, well clear of the flange's left edge where the
+-- overflow cell lands.
+local function drawSpawnPanel(pool)
+	gui.drawRectangle(GAME_X, GAME_Y + SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "white", "black")
 
-	local rows = 0
+	local x, y = GAME_X + 4, GAME_Y + SCREEN_HEIGHT + 4
 	for i, entry in ipairs(pool) do
-		local col = (i - 1) % GRID_COLUMNS
-		local row = math.floor((i - 1) / GRID_COLUMNS)
-		rows = math.max(rows, row + 1)
+		local row, col = spawnGridCell(i, #pool, GRID_COLUMNS)
 		local cellX = x + col * CELL_W
 		local cellY = y + row * CELL_H
 		drawPortraitCell(cellX, cellY, entry)
 	end
-	y = y + rows * CELL_H + TRAVEL_DIAGRAM_GAP
-
-	drawTravelDiagram(x, y, RIGHT_PAD - 8, areaIndex, areaCdCount, areaTotal,
-		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
-end
-
--- Below the game screen only, constrained between the two side panels (they
--- claim the corners): persistent totals not otherwise shown in-game. Drawn
--- first in drawOverlay so it sits at the lowest z-order -- the side panels
--- span the full canvas height and are drawn after, so they win at the
--- corners if anything ever overlaps.
-local function drawBottomBar(caught)
-	local y = GAME_Y + SCREEN_HEIGHT + 4
-
-	gui.drawRectangle(GAME_X, GAME_Y + SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "white", "black")
-
-	gui.drawText(GAME_X + 4, y, "Dex caught: " .. caught .. "/" .. NUM_SPECIES, "white")
 end
 
 local function drawOverlay()
@@ -697,6 +961,8 @@ local function drawOverlay()
 	local queueSet = readEvolvablePartySet()
 	local pool = readSpawnPool(areaIndex, queueSet)
 	local eggPool = readEggPool(field, queueSet)
+	local specials = readSpecials(field)
+	local rateUp = isEncounterRateUp()
 	local areaCdCount, areaTotal = readAreaCdProgress(areaIndex)
 	local caught = readDexCaughtCount()
 
@@ -704,10 +970,9 @@ local function drawOverlay()
 	local leftCdCount, leftTotal = readAreaCdProgress(leftAreaIndex)
 	local rightCdCount, rightTotal = readAreaCdProgress(rightAreaIndex)
 
-	drawBottomBar(caught)
-	drawEggPanel(eggPool)
-	drawSidePanel(areaIndex, areaCdCount, areaTotal, pool,
+	drawEggPanel(eggPool, specials, caught, rateUp, areaIndex, areaCdCount, areaTotal,
 		leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
+	drawSpawnPanel(pool)
 end
 
 while true do
