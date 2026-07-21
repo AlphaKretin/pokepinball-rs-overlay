@@ -131,4 +131,6 @@ def egg_icon_path(name):
 
 
 def area_icon_path(area_index):
-    return f"areas/{AREA_ICON_FILES[area_index]}"
+    if 0 <= area_index < len(AREA_ICON_FILES):
+        return f"areas/{AREA_ICON_FILES[area_index]}"
+    return None

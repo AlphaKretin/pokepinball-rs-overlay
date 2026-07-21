@@ -15,6 +15,7 @@ these are just the same values re-expressed.
 import ctypes
 import os
 import sys
+import warnings
 
 import pygame
 
@@ -61,15 +62,20 @@ class ImageCache:
         self._cache = {}
 
     def get(self, relative_path):
-        img = self._cache.get(relative_path)
-        if img is None:
-            img = pygame.image.load(os.path.join(IMAGES_DIR, relative_path)).convert_alpha()
+        if relative_path not in self._cache:
+            try:
+                img = pygame.image.load(os.path.join(IMAGES_DIR, relative_path)).convert_alpha()
+            except (FileNotFoundError, pygame.error):
+                warnings.warn(f"missing overlay image: {relative_path}")
+                img = None
             self._cache[relative_path] = img
-        return img
+        return self._cache[relative_path]
 
 
 def draw_bordered_image(screen, images, image_path, x, y, w, h, color):
-    screen.blit(images.get(image_path), (x, y))
+    img = images.get(image_path)
+    if img is not None:
+        screen.blit(img, (x, y))
     pygame.draw.rect(screen, color, pygame.Rect(x - 1, y - 1, w + 2, h + 2), width=1)
 
 

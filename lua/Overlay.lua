@@ -28,6 +28,7 @@ local ADDR_POKEDEX_FLAGS = GMAIN + 0x74 -- [NUM_SPECIES], one byte per species
 local PINBALL_GAME = 0x02000000
 local ADDR_AREA = PINBALL_GAME + 0x035
 local ADDR_SELECTED_FIELD = GMAIN + 0x04 -- FIELD_RUBY=0 / FIELD_SAPPHIRE=1
+local VALID_FIELDS = { [0] = true, [1] = true }
 
 -- Travel mode ("go left" / "go right" between areas) resolves its two
 -- destinations from PinballGame.areaRouletteNextSlot/FarSlot (indices into
@@ -594,8 +595,11 @@ end
 -- (neither concept applies to egg mode -- checked, no RARE_SPECIES entry
 -- appears in either field's egg list).
 local function readEggPool(field, queueSet)
-	local rowAddr = ADDR_EGG_LOCATIONS + field * EGG_LOCATIONS_ROW_BYTES
 	local pool = {}
+	if not VALID_FIELDS[field] then
+		return pool
+	end
+	local rowAddr = ADDR_EGG_LOCATIONS + field * EGG_LOCATIONS_ROW_BYTES
 	for slot = 0, EGG_POOL_SIZE - 1 do
 		local species = Memory.readword(rowAddr + slot * 2)
 		pool[#pool + 1] = {
@@ -705,6 +709,22 @@ local function drawPortraitBorder(x, y, w, h, color)
 	gui.drawRectangle(x - 1, y - 1, w + 1, h + 1, color, nil)
 end
 
+-- gui.drawImage errors out (aborting the whole overlay frame) on a missing
+-- file rather than silently no-oping, same as pygame.image.load on the
+-- Python side -- guard the same way: catch it, warn once via console.log,
+-- and skip drawing that cell instead of taking the whole overlay down.
+local warnedMissingImages = {}
+local function safeDrawImage(path, x, y, w, h)
+	if not path then
+		return
+	end
+	local ok, err = pcall(gui.drawImage, path, x, y, w, h)
+	if not ok and not warnedMissingImages[path] then
+		warnedMissingImages[path] = true
+		console.log("Overlay: missing image " .. path .. " (" .. tostring(err) .. ")")
+	end
+end
+
 -- Corner flags are plain solid-color squares, not icons or digits: at this
 -- pixel budget, shapes/glyphs don't read cleanly -- an "ellipse" this small
 -- rendered as a square anyway, and drawText numerals were illegible.
@@ -718,7 +738,7 @@ local function drawMarker(x, y, color)
 end
 
 local function drawPortraitCell(x, y, entry)
-	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
+	safeDrawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
 	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, borderColorFor(entry))
 
 	local exclusiveColor = nil
@@ -751,12 +771,16 @@ end
 -- (specialBorderColorFor). The rate-up flag gets one shared icon next to
 -- the dex-caught line instead of a per-mon marker -- see drawEggPanel.
 local function drawSpecialCell(x, y, entry)
-	gui.drawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
+	safeDrawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
 	drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, specialBorderColorFor(entry))
 end
 
 local function areaIconPath(areaIndex)
-	return AREA_ICON_DIR .. AreaIconFiles[areaIndex + 1]
+	local fileName = AreaIconFiles[areaIndex + 1]
+	if not fileName then
+		return nil
+	end
+	return AREA_ICON_DIR .. fileName
 end
 
 local function roundPx(v)
@@ -834,9 +858,9 @@ local function drawTravelDiagram(x, y, width, areaIndex, areaCdCount, areaTotal,
 	local topIconY = y
 	local bottomIconY = topIconY + PORTRAIT_H + ARROW_GAP
 
-	gui.drawImage(areaIconPath(leftAreaIndex), leftX, topIconY, PORTRAIT_W, PORTRAIT_H)
-	gui.drawImage(areaIconPath(rightAreaIndex), rightX, topIconY, PORTRAIT_W, PORTRAIT_H)
-	gui.drawImage(areaIconPath(areaIndex), centerX, bottomIconY, PORTRAIT_W, PORTRAIT_H)
+	safeDrawImage(areaIconPath(leftAreaIndex), leftX, topIconY, PORTRAIT_W, PORTRAIT_H)
+	safeDrawImage(areaIconPath(rightAreaIndex), rightX, topIconY, PORTRAIT_W, PORTRAIT_H)
+	safeDrawImage(areaIconPath(areaIndex), centerX, bottomIconY, PORTRAIT_W, PORTRAIT_H)
 
 	drawCdStack(leftX, topIconY, true, leftCdCount, leftTotal)
 	drawCdStack(rightX, topIconY, false, rightCdCount, rightTotal)
@@ -858,7 +882,7 @@ end
 -- No exclusive/rare markers here (see readEggPool) -- just the caught/
 -- line-caught border, same colors/meaning as drawPortraitCell.
 local function drawEggHatchCell(x, y, entry)
-	gui.drawImage(eggIconPath(entry.name), x, y, EGG_ICON_W, EGG_ICON_H)
+	safeDrawImage(eggIconPath(entry.name), x, y, EGG_ICON_W, EGG_ICON_H)
 	drawPortraitBorder(x, y, EGG_ICON_W, EGG_ICON_H, borderColorFor(entry))
 end
 
@@ -877,11 +901,13 @@ local function drawEggPanel(pool, specials, caught, rateUp, areaIndex, areaCdCou
 
 	local x, y = GAME_X + SCREEN_WIDTH + 4, 4
 	for i, entry in ipairs(pool) do
-		local col = (i - 1) % EGG_GRID_COLUMNS
-		local row = math.floor((i - 1) / EGG_GRID_COLUMNS)
-		local cellX = x + col * EGG_CELL_W
-		local cellY = y + row * EGG_CELL_H
-		drawEggHatchCell(cellX, cellY, entry)
+		if entry.name ~= "-" then
+			local col = (i - 1) % EGG_GRID_COLUMNS
+			local row = math.floor((i - 1) / EGG_GRID_COLUMNS)
+			local cellX = x + col * EGG_CELL_W
+			local cellY = y + row * EGG_CELL_H
+			drawEggHatchCell(cellX, cellY, entry)
+		end
 	end
 
 	-- Sits in the gap between the egg grid's bottom and SCREEN_HEIGHT --

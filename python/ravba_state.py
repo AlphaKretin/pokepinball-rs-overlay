@@ -18,6 +18,7 @@ ADDR_POKEDEX_FLAGS = GMAIN + 0x74
 PINBALL_GAME = 0x02000000
 ADDR_AREA = PINBALL_GAME + 0x035
 ADDR_SELECTED_FIELD = GMAIN + 0x04
+VALID_FIELDS = (0, 1)  # FIELD_RUBY / FIELD_SAPPHIRE -- see lua/Overlay.lua:30
 
 ADDR_AREA_ROULETTE_NEXT_SLOT = PINBALL_GAME + 0x033
 ADDR_AREA_ROULETTE_FAR_SLOT = PINBALL_GAME + 0x034
@@ -202,6 +203,8 @@ class GameState:
 
     def read_egg_pool(self, field, queue_set):
         pool = []
+        if field not in VALID_FIELDS:
+            return pool
         for slot in range(rom_module.EGG_POOL_SIZE):
             species = self.rom.egg_pool_species(field, slot)
             pool.append(

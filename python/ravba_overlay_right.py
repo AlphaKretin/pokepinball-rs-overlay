@@ -99,9 +99,16 @@ def draw_travel_diagram(screen, images, font, x, y, width, area_index, area_cd, 
     top_icon_y = y
     bottom_icon_y = top_icon_y + common.PORTRAIT_H + ARROW_GAP
 
-    screen.blit(images.get(data.area_icon_path(left_area)), (left_x, top_icon_y))
-    screen.blit(images.get(data.area_icon_path(right_area)), (right_x, top_icon_y))
-    screen.blit(images.get(data.area_icon_path(area_index)), (center_x, bottom_icon_y))
+    for path, pos in (
+        (data.area_icon_path(left_area), (left_x, top_icon_y)),
+        (data.area_icon_path(right_area), (right_x, top_icon_y)),
+        (data.area_icon_path(area_index), (center_x, bottom_icon_y)),
+    ):
+        if path is None:
+            continue
+        img = images.get(path)
+        if img is not None:
+            screen.blit(img, pos)
 
     draw_cd_stack(screen, font, left_x, top_icon_y, True, left_cd, left_total)
     draw_cd_stack(screen, font, right_x, top_icon_y, False, right_cd, right_total)
@@ -119,6 +126,8 @@ def draw_travel_diagram(screen, images, font, x, y, width, area_index, area_cd, 
 
 def draw_egg_grid(screen, images, pool):
     for i, entry in enumerate(pool):
+        if entry.name == "-":
+            continue
         col = i % EGG_GRID_COLUMNS
         row = i // EGG_GRID_COLUMNS
         cell_x = EGG_X + col * EGG_CELL_W
