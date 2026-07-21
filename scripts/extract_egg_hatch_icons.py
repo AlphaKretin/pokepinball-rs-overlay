@@ -28,7 +28,9 @@ import os
 from PIL import Image
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC_DIR = os.path.join(REPO_ROOT, "reference", "pokepinballrs", "graphics", "mon_hatch_sprites")
+SRC_DIR = os.path.join(
+    REPO_ROOT, "reference", "pokepinballrs", "graphics", "mon_hatch_sprites"
+)
 OUT_DIR = os.path.join(REPO_ROOT, "lua", "images", "egg_hatch")
 
 FRAME_W, FRAME_H = 24, 24
@@ -40,11 +42,37 @@ FRAME_W, FRAME_H = 24, 24
 # this list exists just so extraction covers every species either field
 # might need.
 EGG_SPECIES = [
-    "wurmple", "lotad", "seedot", "ralts", "surskit", "shroomish", "whismur",
-    "azurill", "skitty", "zubat", "aron", "plusle", "minun", "oddish",
-    "gulpin", "spoink", "sandshrew", "spinda", "trapinch", "igglybuff",
-    "shuppet", "chimecho", "wynaut", "natu", "phanpy", "snorunt", "spheal",
-    "corsola", "chinchou", "horsea", "bagon",
+    "wurmple",
+    "lotad",
+    "seedot",
+    "ralts",
+    "surskit",
+    "shroomish",
+    "whismur",
+    "azurill",
+    "skitty",
+    "zubat",
+    "aron",
+    "plusle",
+    "minun",
+    "oddish",
+    "gulpin",
+    "spoink",
+    "sandshrew",
+    "spinda",
+    "trapinch",
+    "igglybuff",
+    "shuppet",
+    "chimecho",
+    "wynaut",
+    "natu",
+    "phanpy",
+    "snorunt",
+    "spheal",
+    "corsola",
+    "chinchou",
+    "horsea",
+    "bagon",
 ]
 
 

@@ -3,3 +3,4 @@ rom/*
 /reference/pokepinballrs/
 /reference/ProfOakTASOverlay/
 __pycache__/
+overlay_python/*

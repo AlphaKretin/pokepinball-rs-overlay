@@ -84,7 +84,9 @@ def assemble_metatile_image(data, meta_wide, meta_tall, mwidth, mheight):
             for ty in range(mheight):
                 for tx in range(mwidth):
                     tile = decode_tile_4bpp(data, idx)
-                    px, py = (mx * mwidth + tx) * TILE_SIZE_PX, (my * mheight + ty) * TILE_SIZE_PX
+                    px, py = (mx * mwidth + tx) * TILE_SIZE_PX, (
+                        my * mheight + ty
+                    ) * TILE_SIZE_PX
                     for r in range(TILE_SIZE_PX):
                         for c in range(TILE_SIZE_PX):
                             img[py + r][px + c] = tile[r][c]
@@ -102,7 +104,11 @@ def save_png_rgb(img, palette, path):
 
     def chunk(tag, chunk_data):
         c = tag + chunk_data
-        return struct.pack(">I", len(chunk_data)) + c + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        return (
+            struct.pack(">I", len(chunk_data))
+            + c
+            + struct.pack(">I", zlib.crc32(c) & 0xFFFFFFFF)
+        )
 
     ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)  # 8-bit RGB truecolor
     raw = bytearray()

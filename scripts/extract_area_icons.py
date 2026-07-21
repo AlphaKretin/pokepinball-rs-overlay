@@ -19,7 +19,13 @@ import glob
 import os
 import sys
 
-from gba_gfx import assemble_metatile_image, load_rom, read_palette, rom_offset, save_png_rgb
+from scripts.gba_gfx import (
+    assemble_metatile_image,
+    load_rom,
+    read_palette,
+    rom_offset,
+    save_png_rgb,
+)
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_ROM_GLOB = os.path.join(REPO_ROOT, "rom", "*.gba")
@@ -35,16 +41,28 @@ COLORS_PER_PAL = 16
 # portrait, so this is a straight portrait-index -> filename list, not keyed
 # by AREA_* index. Must match lua/Data.lua's AreaIconFiles.
 PORTRAIT_FILES = [
-    "forest_ruby", "forest_sapphire", "plains_ruby", "plains_sapphire",
-    "ocean_ruby", "ocean_sapphire", "cave_ruby", "cave_sapphire",
-    "safari_zone", "volcano", "lake", "wilderness", "ruin",
+    "forest_ruby",
+    "forest_sapphire",
+    "plains_ruby",
+    "plains_sapphire",
+    "ocean_ruby",
+    "ocean_sapphire",
+    "cave_ruby",
+    "cave_sapphire",
+    "safari_zone",
+    "volcano",
+    "lake",
+    "wilderness",
+    "ruin",
 ]
 
 
 def find_rom():
     matches = glob.glob(DEFAULT_ROM_GLOB)
     if not matches:
-        raise SystemExit(f"No ROM found at {DEFAULT_ROM_GLOB} -- pass a path explicitly.")
+        raise SystemExit(
+            f"No ROM found at {DEFAULT_ROM_GLOB} -- pass a path explicitly."
+        )
     return matches[0]
 
 
@@ -55,9 +73,13 @@ def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     for portrait_idx, name in enumerate(PORTRAIT_FILES):
         gfx_off = rom_offset(GFX_ADDR) + portrait_idx * BYTES_PER_PORTRAIT
-        data = rom[gfx_off:gfx_off + BYTES_PER_PORTRAIT]
-        palette = read_palette(rom, PAL_ADDR + portrait_idx * COLORS_PER_PAL * 2, COLORS_PER_PAL)
-        img = assemble_metatile_image(data, meta_wide=3, meta_tall=2, mwidth=2, mheight=2)
+        data = rom[gfx_off : gfx_off + BYTES_PER_PORTRAIT]
+        palette = read_palette(
+            rom, PAL_ADDR + portrait_idx * COLORS_PER_PAL * 2, COLORS_PER_PAL
+        )
+        img = assemble_metatile_image(
+            data, meta_wide=3, meta_tall=2, mwidth=2, mheight=2
+        )
         out_path = os.path.join(OUT_DIR, f"{name}_icon.png")
         save_png_rgb(img, palette, out_path)
         print(f"wrote {out_path}")
