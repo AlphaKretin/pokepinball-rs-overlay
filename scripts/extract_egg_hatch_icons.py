@@ -1,13 +1,16 @@
-"""Extract egg-hatch icons for lua/Overlay.lua's egg-pool panel.
+"""Extract egg-hatch icons for overlay/Overlay.lua's egg-pool panel.
 
-Unlike mon_portraits/area icons, pret's decomp already ships
-reference/pokepinballrs/graphics/mon_hatch_sprites/*.png as individual
-per-species files -- no ROM decoding needed here, just a crop + transparency
-pass. Each source PNG is a 5x3 grid of 24x24 animation frames (the mon
-popping out of its egg); frame 0 (top-left) is a clean static sprite of the
-mon itself, confirmed by direct visual inspection (Luna's own look at the
-actual sprites, not an upscaled re-render here -- see .claude/plans/
-egg-hatch-panel.md for why that distinction mattered).
+Maintainer/verification tooling only, and a *different* method than the one
+actually used live -- overlay/GfxExtract.lua decodes these straight from ROM
+tile data at runtime (see docs/memory-map.md's gDexAnimationIx addressing).
+This script instead crops frame 0 out of pret's decomp's already-rendered
+reference/pokepinballrs/graphics/mon_hatch_sprites/*.png sheets -- no ROM
+decoding needed here, just a crop + transparency pass. Each source PNG is a
+5x3 grid of 24x24 animation frames (the mon popping out of its egg); frame 0
+(top-left) is a clean static sprite of the mon itself, confirmed by direct
+visual inspection. Kept as an independent cross-check of GfxExtract.lua's
+output, since it doesn't touch raw ROM tile data at all and so can't share a
+bug with the ROM-address-based path.
 
 Uses Pillow, unlike gba_gfx.py's from-scratch decoder/writer -- these are
 already real PNGs to crop and re-key, not raw GBA tile data to assemble, so
@@ -20,7 +23,7 @@ this stays correct even where the exact background color differs (e.g.
 pichu_2_hatch.png, which isn't part of this extraction, uses a different
 index-0 color).
 
-Usage: python python/extract_egg_hatch_icons.py
+Usage: python scripts/extract_egg_hatch_icons.py
 """
 
 import os

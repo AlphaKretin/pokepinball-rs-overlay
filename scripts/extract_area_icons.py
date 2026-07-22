@@ -1,16 +1,15 @@
 """Extract the 13 area-location icons (gPortraitGenericGraphics /
-gPortraitGenericPalettes) from the ROM into lua/images/areas/*_icon.png,
-for lua/Overlay.lua's travel diagram.
+gPortraitGenericPalettes) from the ROM into overlay/images/areas/*_icon.png.
 
-pret/pokepinballrs hasn't split these into PNGs the way it has
-graphics/mon_portraits/*.png -- gPortraitGenericGraphics is still a raw
-`.incbin "baserom.gba", 0x48D68C, 0x2700` (data/rom_1.s:1343-1344), so this
-reads it straight out of the ROM. See docs/graphics-extraction.md for the
-tile-format background, docs/ram-map.md for the RAM/ROM addresses involved,
-and lua/Data.lua's AreaIconFiles for how these files map back to AREA_*
+Maintainer/verification tooling only -- overlay/GfxExtract.lua does this
+live, in Lua, the first time the overlay runs, so end users don't need this
+script. Kept for regenerating/diffing against GfxExtract.lua's own output if
+the decode logic is ever in doubt. See docs/graphics-extraction.md for the
+tile-format background, docs/memory-map.md for the RAM/ROM addresses involved,
+and overlay/Data.lua's AreaIconFiles for how these files map back to AREA_*
 indices in the overlay.
 
-Usage: python python/extract_area_icons.py [path/to/rom.gba]
+Usage: python scripts/extract_area_icons.py [path/to/rom.gba]
 Defaults to the repo's own rom/ folder (gitignored, not committed) if no
 path is given.
 """
@@ -39,7 +38,7 @@ COLORS_PER_PAL = 16
 # gAreaPortraitIndexes (data/rom_1.s:622-625) dedups Ruin Ruby/Sapphire (both
 # -> portrait 12); every other area already has a distinct Ruby/Sapphire
 # portrait, so this is a straight portrait-index -> filename list, not keyed
-# by AREA_* index. Must match lua/Data.lua's AreaIconFiles.
+# by AREA_* index. Must match overlay/Data.lua's AreaIconFiles.
 PORTRAIT_FILES = [
     "forest_ruby",
     "forest_sapphire",

@@ -1,12 +1,11 @@
 -- Pokedex-completion overlay for Pokemon Pinball: Ruby & Sapphire, for use
--- with BizHawk's mGBA core. See docs/ram-map.md for the addresses used here.
+-- with BizHawk's mGBA core. See docs/memory-map.md for the addresses used here.
 --
 -- Canvas wraps the native 240x160 GBA screen with a right panel (full
 -- canvas height -- takes the bottom-right corner, field-wide egg-hatch
 -- pool) and a region below the screen, only as wide as the screen itself
 -- (current-encounter spawn pool). Only shows info that isn't already
--- visible in the game's own UI. Layout is being actively revisited, see
--- .claude/plans/overlay-layout-revisit.md.
+-- visible in the game's own UI.
 --
 -- IMPORTANT: gui.draw* coordinates are relative to the *padded canvas's*
 -- own top-left (0,0), not the game screen's -- client.SetGameExtraPadding
@@ -68,7 +67,7 @@ local AREA_ROULETTE_RUIN_SLOT = 6
 
 -- gWildMonLocations: ROM data, [14 areas][2 arrow-states][8 slots] of u16
 -- SPECIES_* values, SPECIES_NONE-padded. Area-major, then two-arrows row,
--- then three-arrows row. See docs/ram-map.md.
+-- then three-arrows row. See docs/memory-map.md.
 local ADDR_WILD_MON_LOCATIONS = 0x08055A84
 local WILD_MON_SLOTS_PER_ROW = 8
 local WILD_MON_ROW_BYTES = WILD_MON_SLOTS_PER_ROW * 2
@@ -80,8 +79,7 @@ local WILD_MON_ROW_BYTES = WILD_MON_SLOTS_PER_ROW * 2
 -- ADDR_SPECIES_INFO below: hex-searched the ROM for the Ruby row's first 10
 -- species IDs as a little-endian u16 sequence, found a unique match, then
 -- confirmed the following 52 halfwords match both full field rows from the
--- decomp source exactly. See docs/ram-map.md and .claude/plans/
--- egg-hatch-panel.md for the search itself.
+-- decomp source exactly. See docs/memory-map.md and for the search itself.
 --
 -- Only slots 0-24 are real per-field spawns -- BuildSpeciesWeightsForEggMode
 -- only loops `i < 25`, matching AREA_VISIT_COUNT_FORCES_RUIN-style ROM
@@ -100,7 +98,7 @@ local EGG_POOL_SIZE = 25
 -- stride is 0x18 (24), not the 0x16 (22) the struct's field offsets alone
 -- would suggest -- agbcc pads the struct with 2 trailing bytes, confirmed
 -- empirically by checking where species index 1 (Grovyle) actually lands.
--- See docs/ram-map.md.
+-- See docs/memory-map.md.
 local ADDR_SPECIES_INFO = 0x086A3700
 local SPECIES_INFO_ENTRY_BYTES = 0x18
 local SPECIES_INFO_EVOLUTION_TARGET_OFFSET = 0x15
@@ -110,7 +108,7 @@ local SPECIES_INFO_EVOLUTION_TARGET_OFFSET = 0x15
 -- (include/global.h:363/365). A species being caught (dex "C") doesn't mean
 -- *this session's* catch is still sitting in this queue -- it may already
 -- have evolved, or never have been queued this session at all. See
--- docs/ram-map.md's Evolution Mode section.
+-- docs/memory-map.md's Evolution Mode section.
 local ADDR_EVOLVABLE_PARTY_SPECIES = PINBALL_GAME + 0x270
 local ADDR_EVOLVABLE_PARTY_SIZE = PINBALL_GAME + 0x281
 local MAX_EVOLVABLE_PARTY_SIZE = 16
@@ -141,7 +139,7 @@ local RARE_SPECIES = {
 	[160] = true, -- Wobbuffet
 }
 
--- Deferred edge-case specials (see .claude/plans/edge-case-mon-tracking.md):
+-- Deferred edge-case specials:
 -- Pichu (rare egg spawn), Latios/Latias (rare catch spawn, field-exclusive),
 -- Groudon/Kyogre (bonus-game reward, field-exclusive), Rayquaza (bonus-game
 -- reward, either field). species.h numbering, matches SpeciesNames order.
@@ -181,8 +179,8 @@ local SCREEN_WIDTH = 240
 local SCREEN_HEIGHT = 160
 local LINE_HEIGHT = 14
 
--- Portrait grid for the spawn pool. Source images (lua/images/portraits/,
--- copied from the pinball decomp's graphics/mon_portraits) are 48x32, drawn
+-- Portrait grid for the spawn pool. Source images (images/portraits/,
+-- self-extracted from ROM by GfxExtract.lua) are 48x32, drawn
 -- at native size -- any resize call here is a real, lossy downscale done in
 -- software; BizHawk's window zoom afterwards just magnifies whatever pixels
 -- we handed it; it can't recover detail a software resize already threw
@@ -213,9 +211,7 @@ local GRID_MAX_ROWS = 2 -- see spawnGridCell -- the 9-case widens its last row i
 -- (see drawCdStack), not above/below it. Icons are the same 48x32 native
 -- size as the spawn-pool portraits, for the same no-lossy-resize reason.
 -- Drawn at its own natural content width (see TRAVEL_DIAGRAM_WIDTH below),
--- not stretched to fill the flange -- see .claude/plans/
--- overlay-layout-revisit.md for why leftover flange width is left blank
--- rather than handed to the diagram.
+-- not stretched to fill the flange
 local AREA_ICON_DIR = "images/areas/"
 local ARROW_GAP = 14 -- vertical space between the two icon rows
 -- No LINE_HEIGHT rows above/below the icons anymore -- CD counts are a
@@ -258,9 +254,8 @@ local CD_CHAR_WIDTH = 10
 local CD_STACK_GAP = 2 -- gap between an icon's edge and its fraction
 
 -- Egg-hatch grid (right panel): field-wide (not area-scoped, see
--- egg-hatch-panel plan). Icons sourced from reference/pokepinballrs/graphics/
--- mon_hatch_sprites/*.png via python/extract_egg_hatch_icons.py -- 24x24
--- native size (frame 0 of each source sheet), same no-lossy-resize
+-- egg-hatch-panel plan). Icons self-extracted from ROM by GfxExtract.lua --
+-- 24x24 native size (frame 0 of each species' hatch-animation sprite), same no-lossy-resize
 -- reasoning as the portrait grid. Exactly 25 real per-field egg spawns
 -- (EGG_POOL_SIZE) makes a clean 5x5 grid with no leftover slot -- Pichu
 -- (the table's 26th, unused slot) is deliberately excluded, see the plan.
@@ -273,23 +268,15 @@ local EGG_ICON_DIR = "images/egg_hatch/"
 local EGG_GRID_ROWS = math.ceil(EGG_POOL_SIZE / EGG_GRID_COLUMNS)
 
 -- Edge-case specials column (right panel, right of the egg grid/travel
--- diagram content -- see .claude/plans/edge-case-mon-tracking.md). Same
--- native 48x32 portraits as the spawn grid (already present in
--- lua/images/portraits/ for all 6 species involved), stacked in one column
--- rather than a grid since there are only 4 entries.
+-- diagram content. Same --native 48x32 portraits as the spawn grid 
+-- (already present in images/portraits/ for all 6 species involved), 
+-- stacked in one column rather than a grid since there are only 4 entries.
 local SPECIAL_CELL_GAP = 3
 local SPECIAL_CELL_H = PORTRAIT_H + SPECIAL_CELL_GAP
 local SPECIAL_COLUMN_GAP = 4 -- gap between the egg/travel content and this column
 
 local PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN = 4, 4
 
--- Canvas aspect ratio is a deliberate, durable project goal (~16:9 for the
--- full extended play area: native screen + both side panels) -- see
--- CLAUDE.md. It's been dropped twice now under the assumption it was just
--- an arbitrary one-off heuristic, so: when panel content needs more room
--- than the current padding supports at 16:9, widen the padding (not just
--- stretch one dimension) so the canvas grows in both dimensions and stays
--- ~16:9.
 local TARGET_ASPECT_W, TARGET_ASPECT_H = 16, 9
 
 -- What each region's content actually needs, independent of the
@@ -297,8 +284,7 @@ local TARGET_ASPECT_W, TARGET_ASPECT_H = 16, 9
 -- plus the dex-caught line and the travel diagram (bottom-anchored, beside
 -- the spawn-pool grid which sits below the screen at the same height).
 -- Egg grid's more compact, square shape suits the flange's top far better
--- than the spawn grid used to (see .claude/plans/overlay-layout-revisit.md
--- for the full history of this swap).
+-- than the spawn grid used to. 
 -- Unchanged from before the specials column was added: the column doesn't
 -- need its own content-min term. It's top-anchored right next to the egg
 -- grid (SPECIAL_COLUMN_X further down, based on the egg grid's own width,
@@ -385,12 +371,12 @@ local function imageKey(name)
 	return name:lower():gsub("[ '.]", "")
 end
 
--- Matches lua/images/portraits/.
+-- Matches images/portraits/ (GfxExtract.lua).
 local function portraitPath(name)
 	return PORTRAIT_DIR .. imageKey(name) .. "_portrait.png"
 end
 
--- Matches lua/images/egg_hatch/ (python/extract_egg_hatch_icons.py).
+-- Matches images/egg_hatch/ (GfxExtract.lua).
 local function eggIconPath(name)
 	return EGG_ICON_DIR .. imageKey(name) .. "_hatch.png"
 end
@@ -618,8 +604,7 @@ local function readEggPool(field, queueSet)
 	return pool
 end
 
--- The 4 deferred edge-case specials (see .claude/plans/
--- edge-case-mon-tracking.md): Pichu, field-appropriate Lati(as/os),
+-- The 4 deferred edge-case specials: Pichu, field-appropriate Lati(as/os),
 -- field-appropriate Groudon/Kyogre, Rayquaza. Fixed order/field selection,
 -- not table-driven like readSpawnPool/readEggPool since there are only 4
 -- entries and 2 of them are field-conditional single picks rather than a
@@ -897,9 +882,7 @@ end
 -- the spawn-pool grid this never changes with travel, only with a
 -- Ruby/Sapphire field switch -- plus the dex-caught line just below it, and
 -- the travel diagram bottom-anchored beside the spawn-pool grid (which sits
--- below the screen, see drawSpawnPanel). See .claude/plans/
--- overlay-layout-revisit.md for why the egg grid and spawn grid swapped
--- which region they live in.
+-- below the screen, see drawSpawnPanel).
 local function drawEggPanel(pool, specials, caught, rateUp, areaIndex, areaCdCount, areaTotal,
 	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD

@@ -3,8 +3,8 @@
 -- copyrighted sprite/icon assets. Every address/format used here was
 -- verified offline against the actual ROM (SHA1
 -- 9fec81ce2c5df589e0371a0bf2f92a5fe8db730b) and its pret/pokepinballrs decomp
--- before being ported to Lua -- see .claude/plans/fancy-singing-candy.md and
--- docs/graphics-extraction.md for how each address/layout was derived.
+-- before being ported to Lua -- see docs/graphics-extraction.md for how each 
+-- address/layout was derived.
 --
 -- Nothing here is LZ77-compressed (verified for all three asset types), so
 -- this is pure byte-offset arithmetic + a from-scratch PNG writer -- no

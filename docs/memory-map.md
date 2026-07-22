@@ -1,11 +1,18 @@
-# RAM map
+# Memory map
 
-Our own annotated reference for RAM structures relevant to TAS tooling,
-derived from the [`pret/pokepinballrs`](https://github.com/pret/pokepinballrs)
-decompilation (kept at `reference/pokepinballrs/`, gitignored). Struct/field
-offsets are taken from that project's own inline comments, which it treats as
-verified via matching-build decompilation — addresses below should be
-reliable, not speculative, unless flagged otherwise.
+Our own annotated reference for the RAM/ROM structures `overlay/` actually
+reads, derived from the
+[`pret/pokepinballrs`](https://github.com/pret/pokepinballrs) decompilation. Struct/field offsets are
+taken from that project's own inline comments, which it treats as verified
+via matching-build decompilation — addresses below should be reliable, not
+speculative, unless flagged otherwise.
+
+**See also**: [RetroAchievements' code notes for this
+game](https://retroachievements.org/codenotes.php?g=789) — a separate,
+community-maintained address list, useful as a second source or for anything
+not covered here. This doc isn't a copy of it and doesn't attempt to track it
+1:1; it's scoped to what this overlay specifically reads, sourced from the
+decompilation above rather than transcribed from RA.
 
 `gPinballGameState` (the runtime `struct PinballGame` instance) is the base
 for most in-game state, at EWRAM `0x02000000` (`sym_ewram.txt:1`).
@@ -19,27 +26,27 @@ for most in-game state, at EWRAM `0x02000000` (`sym_ewram.txt:1`).
 `PinballGame.ball` (`0x132C`, primary) and `PinballGame.secondaryBall`
 (`0x1330`, multiball). Ball 1 base: `0x02001334`.
 
-| Field | Offset (from ball base) | Notes |
-|---|---|---|
-| `ballHidden` | `0x00` | whether ball is currently drawn/active |
-| `spinAcceleration` | `0x04` | |
-| `spinSpeed` / `prevSpinSpeed` | `0x06` / `0x08` | sprite roll speed |
-| `spinAngle` / `prevSpinAngle` | `0x0A` / `0x0C` | sprite roll angle |
-| `positionQ0` | `0x10` | `Vector16`, integer screen-space-ish position |
-| `velocity` | `0x30` | `Vector16` |
-| `positionQ8` / `prevPositionQ8` | `0x34` / `0x3C` | `Vector32`, true simulated position in Q24.8 fixed point — this is the one to read for physics |
+| Field                           | Offset (from ball base) | Notes                                                                                          |
+| ------------------------------- | ----------------------- | ---------------------------------------------------------------------------------------------- |
+| `ballHidden`                    | `0x00`                  | whether ball is currently drawn/active                                                         |
+| `spinAcceleration`              | `0x04`                  |                                                                                                |
+| `spinSpeed` / `prevSpinSpeed`   | `0x06` / `0x08`         | sprite roll speed                                                                              |
+| `spinAngle` / `prevSpinAngle`   | `0x0A` / `0x0C`         | sprite roll angle                                                                              |
+| `positionQ0`                    | `0x10`                  | `Vector16`, integer screen-space-ish position                                                  |
+| `velocity`                      | `0x30`                  | `Vector16`                                                                                     |
+| `positionQ8` / `prevPositionQ8` | `0x34` / `0x3C`         | `Vector32`, true simulated position in Q24.8 fixed point — this is the one to read for physics |
 
 Related fields directly on `PinballGame` (base `0x02000000`):
 
-| Field | Offset | Notes |
-|---|---|---|
-| `gravityStrengthIndex` | `0x01E` | |
-| `ballFrozenState` | `0x01F` | |
-| `ballInLaunchChute` | `0x020` | |
-| `collisionResponseType` / `collisionSurfaceType` | `0x022` / `0x023` | |
-| `ballCatchState` | `0x025` | |
-| `flipper[2]` | `0x13BC` | `struct FlipperState`, per-side flipper position/collision; struct defined `include/global.h:116-128` |
-| `activeBallIndex` | `0x066` | which of the two ball slots is primary (multiball) |
+| Field                                            | Offset            | Notes                                                                                                 |
+| ------------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------------- |
+| `gravityStrengthIndex`                           | `0x01E`           |                                                                                                       |
+| `ballFrozenState`                                | `0x01F`           |                                                                                                       |
+| `ballInLaunchChute`                              | `0x020`           |                                                                                                       |
+| `collisionResponseType` / `collisionSurfaceType` | `0x022` / `0x023` |                                                                                                       |
+| `ballCatchState`                                 | `0x025`           |                                                                                                       |
+| `flipper[2]`                                     | `0x13BC`          | `struct FlipperState`, per-side flipper position/collision; struct defined `include/global.h:116-128` |
+| `activeBallIndex`                                | `0x066`           | which of the two ball slots is primary (multiball)                                                    |
 
 Full struct layout with inline offset comments: `include/global.h:130-880`.
 
@@ -62,6 +69,7 @@ Full struct layout with inline offset comments: `include/global.h:130-880`.
 source files, only when a specific entity/mode needs a value that frame — the
 number of calls per frame varies with active board/entity logic. There's also
 explicit reseeding, not just advancing:
+
 - Frame-count "catch-up" burn: `numRngAdvances = gMain.systemFrameCount % 16`
   then that many `Random()` calls (`src/all_board_pinball_game_main.c:51-53`,
   `src/spheal_process3.c:42-46`).
@@ -73,15 +81,15 @@ explicit reseeding, not just advancing:
   abs `0x0200B110`) is a per-field/board frame counter distinct from
   `systemFrameCount`.
 
-**Implication for TAS RNG manipulation**: frame-perfect prediction needs
-per-board-state `Random()` call-count tracking, not just frame counting. The
-eliilek TASVideos submission's "RNG advances once per frame" description is a
-simplification — true for some contexts, not universally.
+**Implication for RNG prediction/manipulation**: frame-perfect prediction
+needs per-board-state `Random()` call-count tracking, not just frame
+counting. The eliilek TASVideos submission's "RNG advances once per frame"
+description is a simplification — true for some contexts, not universally.
 
 **Open / to verify experimentally**: whether `rngValue`/`systemFrameCount`/
-`fieldFrameCount` survive savestate load or the pause menu (matters a lot for
-TAS determinism — untested so far). Not all ~40 `Random()` call sites have
-been audited for reseed edge cases; only the two patterns above are confirmed.
+`fieldFrameCount` survive savestate load or the pause menu — untested so
+far. Not all ~40 `Random()` call sites have been audited for reseed edge
+cases; only the two patterns above are confirmed.
 
 ## Pokédex / catch state
 
@@ -102,7 +110,7 @@ Two arrays exist — don't conflate them:
   `gPokedexNumSeen` (abs `0x0202BEB8`), `gPokedexNumOwned`
   (abs `0x0201A514`).
 - `PinballGame.caughtMonCount` (offset `0x5F0`) — caught count for the
-  *current session*, not total dex progress.
+  _current session_, not total dex progress.
 - `CheckAllPokemonCaught()` (`src/pokedex.c:185` call site) — drives the
   link-cable trade icon. **Body not yet read** — exact completion definition
   (all species vs. some subset) needs verification before we build a
@@ -164,10 +172,11 @@ stride 14 bytes) to resolve `PinballGame.area`. Slots 0-5 per field are the
 normal 6-area travel ring. Slot 6 is Ruin — **not** e-reader-exclusive: it's
 also the guaranteed, deterministic destination of every 6th travel since the
 last Ruin visit (see `areaVisitCount` below), independent of the e-reader
-card. The card only affects which area the roulette *starts* you on.
+card. The card only affects which area the roulette _starts_ you on.
 
 `UpdateTravelMode()` (`src/main_board_travel_mode.c:143-163`) resolves the
 destination a travel-mode launch lands on:
+
 ```c
 if (areaVisitCount < 5)
 {
@@ -183,6 +192,7 @@ else
     areaVisitCount = 0;
 }
 ```
+
 So on any travel where `areaVisitCount < 5`, the current left/right
 destinations are just `gAreaRouletteTable[selectedField][areaRouletteNextSlot]`
 (left) and `gAreaRouletteTable[selectedField][areaRouletteFarSlot]` (right).
@@ -201,14 +211,14 @@ skipped.
 
 All on `PinballGame` (base `0x02000000`), lower priority than the above:
 
-| Field | Offset | Notes |
-|---|---|---|
-| `scoreLo` / `scoreHi` | `0x044` / `0x048` | u32; `scoreLo` counts to 99,999,999 then overflows into `scoreHi` |
-| `numLives` | `0x030` | s8, ball count/lives remaining |
-| `ballSpeed` | `0x031` | |
-| `coins` | `0x192` | Sapphire pond mini-currency |
-| `bonusMultiplier` | `0x62F` | |
-| `bonusSubtotal` / `bonusCategoryScore` / `totalBonusScore` | `0x630` / `0x634` / `0x544` | bonus-stage scoring |
+| Field                                                      | Offset                      | Notes                                                             |
+| ---------------------------------------------------------- | --------------------------- | ----------------------------------------------------------------- |
+| `scoreLo` / `scoreHi`                                      | `0x044` / `0x048`           | u32; `scoreLo` counts to 99,999,999 then overflows into `scoreHi` |
+| `numLives`                                                 | `0x030`                     | s8, ball count/lives remaining                                    |
+| `ballSpeed`                                                | `0x031`                     |                                                                   |
+| `coins`                                                    | `0x192`                     | Sapphire pond mini-currency                                       |
+| `bonusMultiplier`                                          | `0x62F`                     |                                                                   |
+| `bonusSubtotal` / `bonusCategoryScore` / `totalBonusScore` | `0x630` / `0x634` / `0x544` | bonus-stage scoring                                               |
 
 ## Wild spawn pool (static ROM data)
 
@@ -282,26 +292,70 @@ Gloom's split in catch mode), and a no-repeat rule against `lastEggSpecies`
 — not reimplemented in Lua for the same reasons as the catch-em weights
 above.
 
-## Portrait / location icon graphics (static ROM data)
+## Sprite/icon graphics (static ROM data)
 
-`gAreaPortraitIndexes`: ROM, `data/rom_1.s:622-625`, abs `0x08137928`. `s16[14]`,
-`AREA_*` index -> icon index 0-12 (13 unique icons -- Ruin Ruby/Sapphire share
-one, `AREA_RUIN_RUBY=12`/`AREA_RUIN_SAPPHIRE=13` both map to icon 12; every
-other area already has a distinct Ruby/Sapphire icon).
+Unlike everything else in this doc, this data has no _runtime_ Lua reader —
+it's image data, decoded once (from-scratch GBA 4bpp-tile + BGR555-palette
+decode, no compression involved) by `overlay/GfxExtract.lua` the first time
+the overlay launches, then cached to `overlay/images/` and loaded normally
+via `gui.drawImage` from then on — see the README's Images section and
+`docs/graphics-extraction.md` for the tile-arrangement/format details. Every
+address below was verified byte-for-byte against the real ROM before being
+ported to Lua.
 
-`gPortraitGenericGraphics`: ROM, `data/rom_1.s:1343-1344`, abs `0x0848D68C`,
-size `0x2700` = 13 x `0x300` bytes (one flat GBA-4bpp tile blob per icon, 24
-tiles/icon). `gPortraitGenericPalettes`: ROM, `data/rom_1.s:988`, abs
-`0x081C00E4`, size `0x200` = 13 x 16 BGR555 colors (one dedicated palette per
-icon). Both DMA'd together by `LoadPortraitGraphics()` (case
+**Area icons** (13 unique, `overlay/images/areas/`): `gAreaPortraitIndexes`
+(ROM, `data/rom_1.s:622-625`, abs `0x08137928`, `s16[14]`) maps `AREA_*`
+index to icon index 0-12 — Ruin Ruby/Sapphire share one icon
+(`AREA_RUIN_RUBY=12`/`AREA_RUIN_SAPPHIRE=13` both -> icon 12), every other
+area has a distinct Ruby/Sapphire icon. Gfx: `gPortraitGenericGraphics`
+(`data/rom_1.s:1343-1344`, abs `0x0848D68C`) + `icon_idx * 0x300`. Pal:
+`gPortraitGenericPalettes` (`data/rom_1.s:988`, abs `0x081C00E4`) +
+`icon_idx * 0x20`. Both DMA'd together by `LoadPortraitGraphics()` (case
 `PORTRAIT_STATE_CURRENT_LOCATION`, `src/all_board_portrait_display.c:35-41`)
 whenever the travel-mode/area-roulette UI shows a location.
 
-Unlike `gWildMonLocations`/`gSpeciesInfo` above, this data has no live Lua
-reader — it's image data, extracted once, offline, rather than read at
-runtime. See `docs/graphics-extraction.md` for the extraction process (tile
-arrangement format, how it was verified) and `python/extract_area_icons.py`
-to regenerate.
+**Species portraits** (one per `SpeciesNames` entry, `overlay/images/portraits/`):
+gfx `gMonPortraitsGroup0_Gfx` (`data/graphics/mon_portraits.inc:1`, abs
+`0x084C596C`) + `species * 0x300` — the 14 named groups in that file are
+back-to-back with no gap, so this is really one flat table despite the
+source splitting it into groups of 15. **Palette addressing is not the same
+flat shape**: each palette group carries a 16th trailing
+`silhouette.gbapal` entry the gfx groups don't have
+(`data/graphics/mon_portraits_pals.inc`, confirmed against the file
+directly), so pal stride is `0x200`/group (16 entries), not `0x1E0`
+(15 entries) — pal addr = `gMonPortraitsGroup0_Pals` (abs `0x0839AB8C`) +
+`(species // 15) * 0x200 + (species % 15) * 0x20`. A flat `species * 0x20`
+formula silently reads the wrong species' colors starting at species 15 —
+caught by pixel-diffing decoded output against the known-good portraits
+already in the repo before trusting this. Both read via
+`gMonPortraitGroupGfx[species/15] + (species%15)*0x300` /
+`gMonPortraitGroupPals[species/15] + (species%15)*0x20`
+(`src/all_board_portrait_display.c:56-68`, case
+`PORTRAIT_STATE_POKEMON_DISPLAY`); that file also uses
+`gMonPortraitGroupPals[0] + 15*0x20` (i.e. group 0's own silhouette slot) as
+a shared "unseen species" silhouette palette.
+
+**Egg-hatch sprites** (31 species that can appear in an egg pool,
+`overlay/images/egg_hatch/`): species -> sprite is **not** a formula — read
+`s16 gDexAnimationIx[species]` (`data/rom_2.s:577`, abs `0x086A61BC`).
+`-1` = no animation; `< 100` = a catch-sprite animation (different asset,
+not extracted by this project); `>= 100` = hatch sprite, with
+`group = (v-100) // 6` and `index = (v-100) % 6` into 6 gfx/pal groups
+(`gMonHatchSpriteGroup0..5_Gfx/_Pals`, `data/graphics/mon_hatch_sprites.inc`
+/ `mon_hatch_sprites_pals.inc`; gfx stride `0x10E0`/species = 15 animation
+frames x `0x120` bytes, pal stride `0x20`). Only frame 0 (first `0x120`
+bytes) is needed. **The 24x24 frame is not a flat 3x3 tile raster** — GBA
+sprites can't be a single 24x24 OBJ, so the game composites it at runtime
+from 4 separate OBJs (`gCatchCreatureOamFramesets`,
+`src/main_board_to_be_split.c:1698-1723`): a 16x16 OBJ (tiles 0-3, 2x2
+row-major) at (0,0), an 8x16 OBJ (tiles 4-5) at (16,0), a 16x8 OBJ
+(tiles 6-7) at (0,16), and an 8x8 OBJ (tile 8) at (16,16), all reading from
+the same fixed 9-tile block. Found by decoding the naive raster order first,
+noticing the bottom third matched perfectly but the top two-thirds didn't
+(a signature of "right decode, wrong tile grouping" rather than wrong
+addresses), then reading the actual OAM setup code instead of guessing
+further. Palette index 0 is transparent (green chroma-key, standard GBA
+sprite convention).
 
 ## Species evolution data (static ROM data)
 
@@ -328,7 +382,7 @@ and shipped that in the overlay — wrong. It read `SPECIES_TREECKO` (index 0)
 fine, since offset 0 needs no stride, but every other index was misaligned,
 making `evolutionTarget` reads (and hence "evolution line fully caught" /
 `baseWeight`) subtly wrong except at index 0. Caught by cross-checking
-species index 1 (Grovyle) with `lua/diagnostics/species_info_check.lua`: its
+species index 1 (Grovyle) with `scripts/species_info_check.lua`: its
 name landed 2 bytes later than `0x16` would predict, confirming `0x18`.
 Lesson: always verify struct array strides against a second element, not just
 the base address against the first.
@@ -347,10 +401,12 @@ hatch result has `gSpeciesInfo[species].evolutionTarget < SPECIES_NONE`
 Evolution Mode itself (`MAIN_BOARD_STATE_EVO_MODE=6`) needs two independent
 gates, both true, checked identically in several board files (e.g.
 `src/ruby_catch_holes.c:399-401`, `src/main_board_to_be_split.c:504-508`):
+
 ```c
 if (gCurrentPinballGame->evoArrowProgress > 2 && gCurrentPinballGame->evolvablePartySize > 0)
     RequestBoardStateTransition(MAIN_BOARD_STATE_EVO_MODE);
 ```
+
 - `evoArrowProgress` (offset `0x72E`, abs `0x0200072E`) — the evo-mode arrow
   meter (parallel to `catchModeArrows`), must reach 3.
 - `evolvablePartySize > 0` — the queue above must be non-empty.
@@ -363,10 +419,10 @@ a ball loss within a session, restored via `arrowProgressPreserved`
 (`src/all_board_state_transitions_and_idle.c:75-133`).
 
 **Why the dex "caught" flag isn't enough to tell you this**: `pokedexFlags`
-is permanent (SRAM) and says nothing about whether *this session's* catch of
+is permanent (SRAM) and says nothing about whether _this session's_ catch of
 that species is still sitting in the queue — it may already have evolved out,
 or the dex entry may be from a previous session with nothing queued right
-now. `lua/Overlay.lua`'s `isPendingEvolution()` walks a species and its
+now. `overlay/Overlay.lua`'s `isPendingEvolution()` walks a species and its
 up-to-2-hop evolution targets (same depth as `isEvolutionLineCaught`) against
 this queue to decide whether to show the "C+" (caught, evolution pending)
 border state instead of plain "C".

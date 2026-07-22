@@ -58,7 +58,7 @@ AreaNames = {
 -- Ruin Ruby/Sapphire share one asset (the game reuses the same portrait for
 -- both); every other area already has a distinct Ruby/Sapphire icon. Files
 -- extracted from the ROM's gPortraitGenericGraphics/gPortraitGenericPalettes
--- (0x0848D68C / 0x081C00E4) into lua/images/areas/ -- see docs/ram-map.md.
+-- (0x0848D68C / 0x081C00E4) into images/areas/ -- see docs/memory-map.md.
 AreaIconFiles = {
 	"forest_ruby_icon.png", "forest_sapphire_icon.png",
 	"plains_ruby_icon.png", "plains_sapphire_icon.png",

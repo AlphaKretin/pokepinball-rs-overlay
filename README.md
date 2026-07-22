@@ -1,35 +1,52 @@
-# pprs-tas-tools
+# _Pokémon Pinball: Ruby & Sapphire_ Pokédex Tracker
 
-Tooling for a tool-assisted speedrun (TAS) of *Pokémon Pinball: Ruby & Sapphire*
-(GBA), targeting Pokédex completion.
+A [BizHawk](https://github.com/TASEmulators/BizHawk) lua overlay for _Pokémon Pinball: Ruby & Sapphire_ to assist with Pokédex completion and related tracking.
 
-## Emulator target
+![A screenshot of the overlay in action](./readme-screenshot.png)
 
-[BizHawk](https://github.com/TASEmulators/BizHawk), using the mGBA core.
-GBAHawk (the from-scratch accuracy-focused GBA core) was considered but is
-currently unmaintained and not bundled with mainline BizHawk, so it's not a
-target for now.
+## Features
 
-## Layout
+- Displays which Pokémon are catchable in the current area
+- Displays which Pokémon are hatchable in the current field
+- Displays Pokédex status of relevant Pokémon, including if evolution is necessary
+- Displays if a Pokémon is rare or requires 2 or 3 GET arrows
+- Displays current and potential next areas with completion counters to inform travel decisions
+- 16:9 aspect ratio (including game display) for convenient recording or fullscreen.
 
-- `lua/` — BizHawk-side Lua scripts: reading game state out of RAM, driving
-  input sequences, live RNG probes.
-- `python/` — analysis and offline tooling fed by data from `lua/`: physics
-  solving (input sequence from a desired ball trajectory), RNG search/
-  manipulation, visualization of game state, one-off asset extraction from
-  the ROM (see `docs/graphics-extraction.md`).
-- `docs/` — our own notes: RAM structures (named/annotated from the `pret`
-  decompilation), RNG findings, physics model writeups.
-- `reference/` (gitignored) — external repos kept for reference, not vendored
-  into the build. Currently:
-  - [`pokepinballrs`](https://github.com/pret/pokepinballrs) — a decompilation
-    of this exact ROM (`sha1: 9fec81ce2c5df589e0371a0bf2f92a5fe8db730b`), used
-    as ground truth for RAM addresses and data structures.
-- `rom/` (gitignored) — the ROM itself, not committed.
+## Installation
 
-## Prior art
+- Download all .lua script files from the `overlay/` folder to the same location on your computer
+- Load your _Pokémon Pinball: Ruby & Sapphire_ (USA) ROM in BizHawk's mGBA core. This overlay is not compatible with other game versions.
+- Go to Tools -> Lua Console, then inside the console, Script -> Open Script
+- Select Overlay.lua (the other 3 scripts will be loaded automatically)
+- The script should automatically start running. The first time you load the script, the game will pause for a bit to extract images, but this won't be repeated for future play sessions.
 
-- [eliilek's "Sapphire Field" TAS](https://tasvideos.org/6951S) — the only
-  published TAS of this game. Notes describe the RNG advancing once per frame
-  based on an in-game timer, and physics exploits (ball-wedging,
-  collision-desync hits). No tools or scripts were published alongside it.
+## Legend
+
+A Pokémon's Pokédex status is denoted by coloured borders
+
+- Black/no border: Uncaught
+- Orange: Caught, but not fully evolved
+- Magenta: Caught this session, but not fully evolved
+- Green: Fully evolved
+- Purple: This special Pokémon (Pichu/Latios/Latias) is eligible to spawn
+
+Information about a Pokémon's spawning is denoted by a coloured square in the top left of their icon
+
+- Gold: Rare (lower base appearance weight)
+- Blue: Only appears if 2 GET arrows are lit
+- Red: Only appears if 3 GET arrows are lit
+
+A green square next to the Pokédex total indicates that the Rayquaza bonus game has been cleared this play session (note: not only this board), which raises the chance of Latios and Latias spawning from 1% to 2%, and due to a bug reduces the chance of Pichu spawning from 2% to 1%.
+
+## Other Files
+
+The 4 lua scripts are all you need to run the overlay - the two other folders in this repository are for development and reference.
+
+- `scripts/` includes one-time scripts I used while developing the overlay and are archived in case the code is useful again in the future
+- `docs/` includes documentation on game data and graphics formats used or derived while developing the overlay
+
+## Acknowledgements
+
+- [`The Pokémon Pinball: Ruby & Sapphire Decompilation Project`](https://github.com/pret/pokepinballrs) was an invaluable resource for understanding memory layout and file formats, as well as uncovering game mechanic knowledge that underpins some of the layout's design decisions.
+- [`UnopenedClosure's Professor Oak Challenge TAS Overlay`](https://github.com/UnopenedClosure/ProfOakTASOverlay) was used as reference for how to build a visual overlay with BizHawk's lua scripting. The memory reading approach was taken directly under the GPLv3 license.

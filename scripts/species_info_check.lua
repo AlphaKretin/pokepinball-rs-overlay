@@ -1,6 +1,6 @@
 -- One-off diagnostic: paste into BizHawk's Lua console (or run via the
 -- script list) while a save is loaded. Not part of the overlay -- checks
--- whether the gSpeciesInfo address/stride from docs/ram-map.md is right,
+-- whether the gSpeciesInfo address/stride from docs/memory-map.md is right,
 -- and dumps the raw values behind a few suspicious overlay readings.
 
 console.clear()
