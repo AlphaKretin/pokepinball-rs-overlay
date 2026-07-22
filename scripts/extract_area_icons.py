@@ -29,7 +29,7 @@ from scripts.gba_gfx import (
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_ROM_GLOB = os.path.join(REPO_ROOT, "rom", "*.gba")
-OUT_DIR = os.path.join(REPO_ROOT, "lua", "images", "areas")
+OUT_DIR = os.path.join(REPO_ROOT, "overlay", "images", "areas")
 
 GFX_ADDR = 0x0848D68C
 PAL_ADDR = 0x081C00E4

@@ -31,7 +31,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC_DIR = os.path.join(
     REPO_ROOT, "reference", "pokepinballrs", "graphics", "mon_hatch_sprites"
 )
-OUT_DIR = os.path.join(REPO_ROOT, "lua", "images", "egg_hatch")
+OUT_DIR = os.path.join(REPO_ROOT, "overlay", "images", "egg_hatch")
 
 FRAME_W, FRAME_H = 24, 24
 

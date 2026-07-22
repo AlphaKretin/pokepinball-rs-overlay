@@ -1,5 +1,6 @@
 rom/*
 *.gba
+/overlay/images/
 /reference/pokepinballrs/
 /reference/ProfOakTASOverlay/
 __pycache__/
