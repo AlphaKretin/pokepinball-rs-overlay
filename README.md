@@ -11,6 +11,7 @@ A [BizHawk](https://github.com/TASEmulators/BizHawk) lua overlay for _Pokémon P
 - Displays Pokédex status of relevant Pokémon, including if evolution is necessary
 - Displays if a Pokémon is rare or requires 2 or 3 GET arrows
 - Displays current and potential next areas with completion counters to inform travel decisions
+- Displays progress during Bonus Stages
 - 16:9 aspect ratio (including game display) for convenient recording or fullscreen.
 
 ## Installation

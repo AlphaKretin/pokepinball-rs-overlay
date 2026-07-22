@@ -207,6 +207,100 @@ Ruin's override branch (`areaVisitCount >= 5`) never writes `NextSlot`/
 Ruin resumes with exactly the same two ring destinations the forced travel
 skipped.
 
+## Menu state / bonus stages
+
+Confirmed against `reference/pokepinballrs/` source only — **not yet
+live-verified in BizHawk**, unlike most of the rest of this doc. Verify
+against live RAM once each state below is actually reachable, same as any
+other source-derived-only entry.
+
+- `gMain.mainState` (offset `0x02`, abs `0x0200B0C2`,
+  `include/main.h:39`) — top-level screen dispatch. Values
+  (`include/constants/global.h:4-15`): `STATE_INTRO=0`, `STATE_TITLE=1`
+  (main menu), `STATE_GAME_MAIN=2`, `STATE_GAME_IDLE=3`, `STATE_OPTIONS=4`,
+  `STATE_POKEDEX=5`, `STATE_SAVE_ERASE=6`, `STATE_EREADER=7`,
+  `STATE_SCORES_MAIN=8`, `STATE_SCORES_IDLE=9`, `STATE_FIELD_SELECT=10`,
+  `STATE_BONUS_FIELD_SELECT=11`. Only `STATE_GAME_MAIN`/`STATE_GAME_IDLE`
+  mean a board (normal or bonus) is actually loaded and playable —
+  `PinballGame.area`/wild-mon-table reads are only meaningful then, gated
+  further by `selectedField` below.
+- `gMain.selectedField` (offset `0x04`, already documented above for its
+  Ruby/Sapphire values) extends to bonus fields
+  (`include/constants/fields.h:4-14`): `FIELD_DUSCLOPS=2`, `FIELD_KECLEON=3`,
+  `FIELD_KYOGRE=4`, `FIELD_GROUDON=5`, `FIELD_RAYQUAZA=6`, `FIELD_SPHEAL=7`,
+  `MAIN_FIELD_COUNT=2`. Confirmed the authoritative board-type dispatch key
+  in `src/all_board_pinball_game_main.c` (e.g. lines 93-100, 176-253,
+  401-475). Also confirmed (`src/field_select.c:280`) it tracks the
+  *currently highlighted* field every frame during `STATE_FIELD_SELECT`
+  (not just on confirm), and that screen only ever sets it to 0/1.
+- `PinballGame.boardState` (offset `0x013`, already listed above for the
+  normal-board `MAIN_BOARD_STATE_*` values) is reused per-bonus-board with
+  entirely different enums:
+  - Kecleon (`include/constants/board/kecleon_states.h`):
+    `KECLEON_BOARD_STATE_BATTLE_PHASE=1`.
+  - Dusclops (`include/constants/board/dusclops_states.h`):
+    `DUSCLOPS_BOARD_STATE_1_DUSKULL_PHASE=1`,
+    `DUSCLOPS_BOARD_STATE_3_DUSCLOPS_PHASE=3`.
+  - Kyogre/Groudon/Rayquaza share `LegendaryBoardState`
+    (`include/constants/board/bonus_board.h`):
+    `LEGENDARY_BOARD_STATE_BATTLE_PHASE=1`.
+- `PinballGame.legendaryHitsRequired` (offset `0x384`, s8,
+  `include/global.h:504`) — live RAM, computed at stage entry as `18` if
+  `numCompletedBonusStages % 5 == 3` else `15`
+  (`src/kyogre_process3.c:50-53`, `src/groudon_process3.c:44-47`,
+  `src/rayquaza_process3.c:38-41`, identical pattern in all three). Kyogre/
+  Groudon/Rayquaza only — read directly rather than reimplementing the
+  15-vs-18 logic.
+- `PinballGame.bonusModeHitCount` (offset `0x385`, s8,
+  `include/global.h:505`) — **shared field, meaning depends on which
+  board/boardState is active**:
+  - Kecleon (`src/kecleon_process3.c:620,636`): hit count, hardcoded max 10.
+  - Dusclops Duskull phase (`boardState==1`, `dusclops_process3.c:443`):
+    Duskulls defeated. `DUSKULL_NEEDED_TO_PHASE_TRANSFER=20`
+    (`dusclops_process3.c:11`), but the actual transition gate is fuzzier
+    than a clean 20: spawning stops once `bonusModeHitCount > 18`
+    (`DUSKULL_ALLOWED_TO_SPAWN`, `:13`), at most 2 Duskulls are ever
+    concurrently alive (`minionActiveCount < 2`, `:288`, despite the 3-slot
+    array/`DUSKULL_CONCURRENT_MAX`), and the phase only advances once every
+    already-spawned Duskull is cleared (`:266-280`) — so the realistic
+    final count is 19 or 20 depending on exactly how many were still alive
+    when the 18-kill spawn-gate closed.
+  - Dusclops Dusclops phase (`boardState==3`, reset on entry `:124`,
+    incremented `:872`): direct hits,
+    `DUSCLOPS_HITS_NEEDED_TO_SUCCEED=5` (`:14,858`).
+  - Kyogre/Groudon/Rayquaza: hits vs. `legendaryHitsRequired` above.
+- **Devon Scope power-up** (Kecleon board only — makes the otherwise
+  invisible Kecleon appear on screen for a set time): `kecleonTargetActive`
+  (offset `0x406`, s8/bool, `include/global.h:558`) and `kecleonAnimTimer`
+  (offset `0x408`, u16, `include/global.h:560`). Confirmed via
+  `UpdateKecleonScopeItem`/`UpdateKecleonScopeVision`
+  (`src/kecleon_process3.c:928-1052`): the falling scope orb hitting the
+  ball sets `kecleonTargetActive=1` and plays `SE_KECLEON_SCOPE_ACTIVATED`;
+  while active, `kecleonAnimTimer` counts 0->600 (~10s at 60fps) and drives
+  `gMain.kecleonOverlayHeight` — an actual screen overlay revealing Kecleon
+  regardless of its own entity state — before auto-clearing. Explicitly
+  verified distinct from the unrelated hit-then-rise entity-state cycle
+  (`KECLEON_ENTITY_STATE_HIT_WHILE_DOWN` -> `RESPOND_TO_HIT` ->
+  `RISE_FROM_DOWN`, `:614-655`, which uses `bossFrameTimer`/
+  `kecleonCamoStrength` instead and has no "scope" naming anywhere near it)
+  after a specific request to double-check the two weren't being conflated.
+- **Spheal minigame score breakdown**: `PinballGame.sphealKnockdownCount[2]`
+  (offset `0x52C`, s8 array, `include/global.h:645`, `ix 0=spheal,
+  1=ball`), incremented live at `spheal_process3.c:1291`/`:1334`. Spheal
+  knockdowns worth 5,000,000 pts each, ball-through-hoop worth 1,000,000
+  pts each (`spheal_process3.c:1665-1667`). There's also
+  `sphealKnockdownDisplayCount[2]` (offset `0x52E`) — a slow tally-animation
+  copy used only for the results-screen counting effect, not useful for a
+  live readout; read `sphealKnockdownCount` directly instead.
+  `PinballGame.totalBonusScore` (offset `0x544`, already documented above)
+  is the computed sum, but only set once the results screen computes it
+  (`:1665-1667`) — not valid during live play, unlike the two counts.
+- **Not found**: a "Devon Scope" *timer* separate from the above was
+  initially suspected not to exist at all (a full-repo grep for "devon"
+  turned up nothing); it turned out to just be under different in-game
+  naming than expected, matching the mechanic described above once searched
+  for by behavior instead of name.
+
 ## Score / HUD
 
 All on `PinballGame` (base `0x02000000`), lower priority than the above:

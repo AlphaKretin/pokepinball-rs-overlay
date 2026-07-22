@@ -68,8 +68,11 @@ AreaIconFiles = {
 	"wilderness_icon.png", "ruin_icon.png", "ruin_icon.png",
 }
 
--- gMain.selectedField / tempField
-FieldNames = { "Ruby", "Sapphire" }
+-- gMain.selectedField / tempField. include/constants/fields.h FIELD_* (0-7).
+FieldNames = {
+	"Ruby", "Sapphire", "Dusclops", "Kecleon", "Kyogre", "Groudon",
+	"Rayquaza", "Spheal",
+}
 
 -- include/constants/variables.h pokedex flag values
 PokedexFlag = {
