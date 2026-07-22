@@ -885,8 +885,12 @@ end
 -- below the screen, see drawSpawnPanel).
 local function drawEggPanel(pool, specials, caught, rateUp, areaIndex, areaCdCount, areaTotal,
 	leftAreaIndex, leftCdCount, leftTotal, rightAreaIndex, rightCdCount, rightTotal)
+	-- Outline color matched to the fill rather than passed nil -- BizHawk's
+	-- gui.drawRectangle treats a nil/omitted outline as its own default
+	-- (white), not "no outline", so nil alone still drew the border. Same
+	-- color for both makes the outline visually disappear into the fill.
 	local panelHeight = SCREEN_HEIGHT + DOWN_PAD
-	gui.drawRectangle(GAME_X + SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "white", "black")
+	gui.drawRectangle(GAME_X + SCREEN_WIDTH, 0, RIGHT_PAD, panelHeight, "black", "black")
 
 	local x, y = GAME_X + SCREEN_WIDTH + 4, 4
 	for i, entry in ipairs(pool) do
@@ -902,7 +906,10 @@ local function drawEggPanel(pool, specials, caught, rateUp, areaIndex, areaCdCou
 	-- Sits in the gap between the egg grid's bottom and SCREEN_HEIGHT --
 	-- see the CONTENT_MIN_RIGHT_PAD comment for why that gap is always big
 	-- enough for one text line without its own content-min term.
-	local dexText = "Dex caught: " .. caught .. "/" .. DEX_DISPLAY_TOTAL
+	-- Numeric-only, no "caught"/"dex" label -- leaves room on this row for
+	-- other readouts later, implication is clear from context (this is the
+	-- only x/y count at this position).
+	local dexText = caught .. "/" .. DEX_DISPLAY_TOTAL
 	local dexTextY = GAME_Y + SCREEN_HEIGHT - LINE_HEIGHT - PANEL_BOTTOM_MARGIN
 	gui.drawText(x, dexTextY, dexText, "white")
 
@@ -959,7 +966,9 @@ end
 -- WIDTH's horizontal center, well clear of the flange's left edge where the
 -- overflow cell lands.
 local function drawSpawnPanel(pool)
-	gui.drawRectangle(GAME_X, GAME_Y + SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "white", "black")
+	-- Outline matched to fill -- see drawEggPanel's rectangle for why (nil
+	-- alone doesn't suppress it).
+	gui.drawRectangle(GAME_X, GAME_Y + SCREEN_HEIGHT, SCREEN_WIDTH, DOWN_PAD, "black", "black")
 
 	local x, y = GAME_X + 4, GAME_Y + SCREEN_HEIGHT + 4
 	for i, entry in ipairs(pool) do
