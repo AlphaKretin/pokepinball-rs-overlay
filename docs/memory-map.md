@@ -158,10 +158,11 @@ catchable Pokémon is actually on display. To know whether it's currently
 meaningful, gate on `boardState` being one of the three values above — don't
 read `currentSpecies` unconditionally.
 
-**Open / to verify**: contents of `gWildMonLocations` (species-per-area table)
-and `gCommonAndEggWeights` (rarity weight table) — these are data tables, not
-single variables; not yet read. They matter for predicting/manipulating
-spawns.
+`gWildMonLocations` (species-per-area table) has been read successfully since
+`overlay/panels/NormalBoardPanel.lua`'s `readAreaSpeciesRows` (spawn-pool grid
+display, working since one of the repo's earliest commits) — address/shape
+confirmed correct in practice, not just in theory. `gCommonAndEggWeights`
+(rarity weight table) is still unread by any code in this repo.
 
 ## Travel mode (area-to-area movement)
 

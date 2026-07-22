@@ -55,10 +55,10 @@ local BODY_LINES = {
 -- in state order), right is everything about "this one's worth extra
 -- attention" (eligible-to-catch plus every corner marker).
 local LEFT_COLUMN = {
-	{ kind = "border", species = "Luvdisc", color = Draw.BORDER_COLOR_UNCAUGHT, label = "Uncaught", outlineOnly = true },
-	{ kind = "border", species = "Luvdisc", color = Draw.BORDER_COLOR_CAUGHT, label = "Caught before" },
-	{ kind = "border", species = "Luvdisc", color = Draw.BORDER_COLOR_PENDING_EVOLUTION, label = "Evolvable" },
-	{ kind = "border", species = "Luvdisc", color = Draw.BORDER_COLOR_LINE_CAUGHT, label = "Completed" },
+	{ kind = "border", species = "Beldum", color = Draw.BORDER_COLOR_UNCAUGHT, label = "Uncaught" },
+	{ kind = "border", species = "Beldum", color = Draw.BORDER_COLOR_CAUGHT, label = "Caught before" },
+	{ kind = "border", species = "Beldum", color = Draw.BORDER_COLOR_PENDING_EVOLUTION, label = "Evolvable" },
+	{ kind = "border", species = "Beldum", color = Draw.BORDER_COLOR_LINE_CAUGHT, label = "Completed" },
 }
 local RIGHT_COLUMN = {
 	{ kind = "border", species = "Latias", color = Draw.BORDER_COLOR_BLOCKED, label = "Can't spawn" },
