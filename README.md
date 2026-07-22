@@ -30,7 +30,7 @@ A Pokémon's Pokédex status is denoted by coloured borders
 - Orange: Caught, but not fully evolved
 - Magenta: Caught this session, but not fully evolved
 - Green: Fully evolved
-- Purple: This special Pokémon (Pichu/Latios/Latias) is eligible to spawn
+- Purple: This special Pokémon (Pichu/Latios/Latias) can't spawn yet (catch-count gate not yet met)
 
 Information about a Pokémon's spawning is denoted by a coloured square in the top left of their icon
 

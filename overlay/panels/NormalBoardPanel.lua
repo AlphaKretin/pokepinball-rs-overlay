@@ -547,13 +547,14 @@ function NormalBoardPanel.readSpecials(field)
 			name = speciesName(groudonKyogreSpecies),
 			caught = isCaught(groudonKyogreSpecies),
 			lineCaught = isEvolutionLineCaught(groudonKyogreSpecies),
-			eligible = false,
+			-- No catch-count gate -- eligible left nil/absent so
+			-- Draw.specialBorderColorFor's blocked check never fires for this one.
 		},
 		{
 			name = speciesName(SPECIES_RAYQUAZA),
 			caught = isCaught(SPECIES_RAYQUAZA),
 			lineCaught = isEvolutionLineCaught(SPECIES_RAYQUAZA),
-			eligible = false,
+			-- No catch-count gate -- see groudonKyogreSpecies comment above.
 		},
 	}
 end

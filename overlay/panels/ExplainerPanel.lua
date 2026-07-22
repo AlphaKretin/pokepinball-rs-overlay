@@ -35,7 +35,7 @@ local BODY_LINES = {
 -- {kind, species, color, label, outlineOnly}. Real portrait examples
 -- instead of solid-color swatches, per
 -- .claude/plans/public-polish-deferred.md item 2 -- picks Luna already
--- made: Eligible->Latias, Rare->Nosepass, 2-arrows->Baltoy,
+-- made: Blocked(gated-not-yet-eligible)->Latias, Rare->Nosepass, 2-arrows->Baltoy,
 -- 3-arrows->Zangoose. The four border-color states (uncaught/caught/
 -- pending-evo/line-caught) don't have a picked example yet -- Luvdisc is a
 -- structural placeholder only, swap once Luna decides (needs to be
@@ -61,7 +61,7 @@ local LEFT_COLUMN = {
 	{ kind = "border", species = "Luvdisc", color = Draw.BORDER_COLOR_LINE_CAUGHT, label = "Completed" },
 }
 local RIGHT_COLUMN = {
-	{ kind = "border", species = "Latias", color = Draw.BORDER_COLOR_ELIGIBLE, label = "Can spawn" },
+	{ kind = "border", species = "Latias", color = Draw.BORDER_COLOR_BLOCKED, label = "Can't spawn" },
 	{ kind = "marker", species = "Baltoy", color = Draw.TWO_EXCLUSIVE_MARKER_COLOR, label = "GE only" },
 	{ kind = "marker", species = "Zangoose", color = Draw.THREE_EXCLUSIVE_MARKER_COLOR, label = "GET only" },
 	{ kind = "marker", species = "Nosepass", color = Draw.RARE_MARKER_COLOR, label = "Rare" },

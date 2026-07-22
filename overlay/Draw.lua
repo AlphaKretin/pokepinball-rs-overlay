@@ -73,16 +73,24 @@ function Draw.borderColorFor(entry)
 	return Draw.BORDER_COLOR_CAUGHT
 end
 
--- Specials-only tier, one step below "caught": a species with no evolution
--- target already lands on BORDER_COLOR_LINE_CAUGHT the moment it's caught
--- (isEvolutionLineCaught == isCaught for a species with no further
--- evolution), so this only adds a distinct color for "not caught yet, but
--- eligible to spawn/roll for". entry additionally needs {eligible}.
-Draw.BORDER_COLOR_ELIGIBLE = 0xFFAF52DE
+-- Specials-only tier: flags the one exceptional state -- not caught yet AND
+-- currently blocked by a catch-count gate (Pichu/Lati only). Everything else
+-- uses the normal border scheme, including specials with no gate at all
+-- (Groudon/Kyogre/Rayquaza -- entry.eligible left nil/absent for those, see
+-- NormalBoardPanel.readSpecials) and gated species once their condition is
+-- met. Deliberately inverted from an earlier "highlight when eligible"
+-- version: that made purple mean "catchable now" for 2 of 4 specials while
+-- silently implying nothing about the other 2 (which are always catchable),
+-- which read as a spawnability signal it wasn't. Flagging the blocked
+-- exception instead means the caption only has to explain the one state that
+-- deviates from normal ("Can't spawn yet"), not a distinction that doesn't
+-- apply uniformly. entry needs {eligible} as tri-state: true (gate met),
+-- false (gate not met), nil/absent (no gate, this check never fires).
+Draw.BORDER_COLOR_BLOCKED = 0xFFAF52DE
 
 function Draw.specialBorderColorFor(entry)
-	if not entry.caught and entry.eligible then
-		return Draw.BORDER_COLOR_ELIGIBLE
+	if not entry.caught and entry.eligible == false then
+		return Draw.BORDER_COLOR_BLOCKED
 	end
 	return Draw.borderColorFor(entry)
 end

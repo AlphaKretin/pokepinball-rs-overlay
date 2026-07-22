@@ -18,7 +18,7 @@ colors = {
     "Caught (orange)": 0xFF9500,
     "Pending evo (magenta)": 0xFF2D95,
     "Line complete (green)": 0x34C759,
-    "Eligible (purple)": 0xAF52DE,
+    "Blocked (purple)": 0xAF52DE,
     "Rare marker (gold)": 0xFFD700,
     "2-arrow marker (blue)": 0x2E9BFF,
     "3-arrow marker (red)": 0xFF3B30,
