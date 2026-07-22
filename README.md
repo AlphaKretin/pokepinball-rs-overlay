@@ -19,7 +19,7 @@ A [BizHawk](https://github.com/TASEmulators/BizHawk) lua overlay for _Pokémon P
 - Download all .lua script files from the `overlay/` folder to the same location on your computer
 - Load your _Pokémon Pinball: Ruby & Sapphire_ (USA) ROM in BizHawk's mGBA core. This overlay is not compatible with other game versions.
 - Go to Tools -> Lua Console, then inside the console, Script -> Open Script
-- Select Overlay.lua (the other 3 scripts will be loaded automatically)
+- Select Overlay.lua (the other scripts will be loaded automatically)
 - The script should automatically start running. The first time you load the script, the game will pause for a bit to extract images, but this won't be repeated for future play sessions.
 
 ## Legend

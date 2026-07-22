@@ -122,6 +122,19 @@ local SPECIES_LATIOS = 196
 local SPECIES_KYOGRE = 197
 local SPECIES_GROUDON = 198
 local SPECIES_RAYQUAZA = 199
+local SPECIES_JIRACHI = 200
+
+-- AREA_WILDERNESS from include/constants/areas.h. Mirrors the decomp's own
+-- `area > AREA_WILDERNESS` gate in InitRouletteWheel
+-- (main_board_center_capture_hole.c) for exposing the Jirachi roulette
+-- slot -- areas 12/13 (Ruin Ruby/Sapphire) are the only ones past it.
+-- Jirachi isn't in gWildMonLocations (it's a roulette prize, not a wild
+-- spawn), so it can't fall out of readAreaSpeciesRows like everything else
+-- -- added explicitly to the Ruin areas' CD-fraction pool below instead.
+-- Not modeling the once-per-session roulette gating here is deliberate: the
+-- CD fraction just answers "is there more to do here," and until Jirachi is
+-- caught, the Ruins are where that happens.
+local AREA_WILDERNESS = 11
 
 -- caughtMonCount: PinballGame+0x5F0, u16, per-game-session catch count (not
 -- a dex total) -- gates both Pichu and Latios/Latias's forced-rare rolls
@@ -413,6 +426,9 @@ local function readAreaSpeciesSet(area)
 	local list = {}
 	for _, entry in ipairs(readAreaSpeciesRows(area)) do
 		list[#list + 1] = entry.species
+	end
+	if area > AREA_WILDERNESS then
+		list[#list + 1] = SPECIES_JIRACHI
 	end
 	return list
 end
