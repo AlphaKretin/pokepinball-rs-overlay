@@ -21,6 +21,12 @@
 
 dofile("Memory.lua")
 dofile("Data.lua")
+dofile("GfxExtract.lua")
+
+-- Self-extracts area/portrait/egg-hatch icons straight from the loaded ROM
+-- on first launch (no-op on every launch after) -- see GfxExtract.lua. Must
+-- run before any gui.drawImage call below expects these files to exist.
+GfxExtract.ensureAll()
 
 local GMAIN = 0x0200B0C0
 local ADDR_POKEDEX_FLAGS = GMAIN + 0x74 -- [NUM_SPECIES], one byte per species
