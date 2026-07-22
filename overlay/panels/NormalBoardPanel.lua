@@ -283,10 +283,13 @@ local function imageKey(name)
 	return name:lower():gsub("[ '.]", "")
 end
 
--- Matches images/portraits/ (GfxExtract.lua).
-local function portraitPath(name)
+-- Matches images/portraits/ (GfxExtract.lua). Exposed (not local) since
+-- ExplainerPanel's legend draws real species portraits as examples too, see
+-- .claude/plans/public-polish-deferred.md item 2.
+function NormalBoardPanel.portraitPath(name)
 	return PORTRAIT_DIR .. imageKey(name) .. "_portrait.png"
 end
+local portraitPath = NormalBoardPanel.portraitPath
 
 -- Matches images/egg_hatch/ (GfxExtract.lua).
 local function eggIconPath(name)
@@ -584,14 +587,16 @@ local function drawPortraitCell(x, y, entry)
 	end
 end
 
--- No exclusive/rare markers here (that concept doesn't apply to this
--- column) -- just the eligible/caught/line-caught border
--- (Draw.specialBorderColorFor). The rate-up flag gets one shared icon next
--- to the dex-caught line instead of a per-mon marker -- see
--- drawEggAndSpecials.
+-- No exclusive markers here (that concept doesn't apply to this column) --
+-- just the eligible/caught/line-caught border (Draw.specialBorderColorFor),
+-- plus the rate-up marker on Rayquaza's cell specifically when rateUpMarker
+-- is set -- see drawEggAndSpecials.
 local function drawSpecialCell(x, y, entry)
 	Draw.safeDrawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
 	Draw.drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, Draw.specialBorderColorFor(entry))
+	if entry.rateUpMarker then
+		Draw.drawMarker(x - 2, y - 2, Draw.RARE_MARKER_COLOR)
+	end
 end
 
 function NormalBoardPanel.areaIconPath(areaIndex)
@@ -675,17 +680,15 @@ function NormalBoardPanel.drawEggAndSpecials(pool, specials, caught, rateUp)
 	local dexTextY = GAME_Y + SCREEN_HEIGHT - LINE_HEIGHT - PANEL_BOTTOM_MARGIN
 	gui.drawText(x, dexTextY, dexText, "white")
 
-	-- Single shared indicator for the rate-up flag -- one global toggle, not
-	-- a per-mon property, so it doesn't belong on the Pichu/Lati portraits
-	-- themselves. Gold, same as RARE_MARKER_COLOR (this flag raises rare-mon
-	-- odds, same "worth prioritizing" meaning), not a dedicated color.
-	-- Player is expected to already know what it means, same as the C/D
-	-- border colors elsewhere.
-	if rateUp then
-		local markerX = x + #dexText * Draw.CD_CHAR_WIDTH + 6
-		local markerY = dexTextY + (LINE_HEIGHT - Draw.MARKER_SIZE) / 2
-		Draw.drawMarker(markerX, markerY, Draw.RARE_MARKER_COLOR)
-	end
+	-- Rate-up flag is a global toggle, not a per-mon property, so there's no
+	-- single "correct" special to attach it to -- Rayquaza (always the last
+	-- entry, see readSpecials) is picked as the shared indicator's home
+	-- since it's already a fixed, always-visible portrait rather than
+	-- floating text next to the dex-caught count (relocated per
+	-- .claude/plans/public-polish-deferred.md item 3). Gold, same as
+	-- RARE_MARKER_COLOR (this flag raises rare-mon odds, same "worth
+	-- prioritizing" meaning) -- not a dedicated color yet, see item 4.
+	specials[#specials].rateUpMarker = rateUp
 
 	for i, entry in ipairs(specials) do
 		drawSpecialCell(SPECIAL_COLUMN_X, y + (i - 1) * SPECIAL_CELL_H, entry)

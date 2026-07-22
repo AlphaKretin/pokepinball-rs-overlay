@@ -111,6 +111,18 @@ end
 -- render as true reflections: at this resolution, two arrows with the
 -- "same" geometry but computed separately can each round their floats to a
 -- different pixel and end up visibly lopsided.
+-- gui.drawText's native horizalign="center" (see the NOTE by CD_CHAR_WIDTH
+-- below for why this is used instead of estimating text width by hand) --
+-- x becomes the horizontal center point rather than the left edge.
+-- vertalign defaults to nil (gui.drawText's own default, "bottom") to match
+-- plain gui.drawText(x, y, text, color) calls elsewhere, but callers that
+-- want y treated as a vertical center too (not just horizontal) can pass
+-- vertalign="middle" explicitly -- native, not hand-computed, for the same
+-- reason as horizalign (see ExplainerPanel's Rayquaza caption).
+function Draw.drawTextCentered(x, y, text, color, vertalign)
+	gui.drawText(x, y, text, color or "white", nil, nil, nil, nil, "center", vertalign)
+end
+
 function Draw.drawArrow(x1, y1, x2, y2, color)
 	x1, y1, x2, y2 = Draw.roundPx(x1), Draw.roundPx(y1), Draw.roundPx(x2), Draw.roundPx(y2)
 	gui.drawLine(x1, y1, x2, y2, color)
@@ -158,6 +170,16 @@ local CD_STACK_LINE_GAP = 2
 Draw.CD_CHAR_WIDTH = 10
 local CD_CHAR_WIDTH = Draw.CD_CHAR_WIDTH
 local CD_STACK_GAP = 2 -- gap between an icon's edge and its fraction
+
+-- NOTE: don't add a general-text char-width estimate here for centering
+-- purposes -- gui.drawText has a native horizalign="center" parameter (9th
+-- positional arg: x, y, message, forecolor, backcolor, fontsize,
+-- fontfamily, fontstyle, horizalign), which centers exactly against the
+-- font's real metrics. An estimate-and-multiply approach (tried and
+-- reverted 2026-07-22, see git history) can only ever approximate this and
+-- isn't needed -- CD_CHAR_WIDTH above stays digit-only/local to the
+-- CD-stack fraction, which has its own reason not to use it (sizing a
+-- fraction to sit beside an icon, not centering it).
 
 -- Caught/total for an icon-sized cell, as a tight fraction (count over
 -- total, separated by a real drawn line rather than "--" text) beside the
