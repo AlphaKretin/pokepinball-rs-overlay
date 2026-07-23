@@ -38,24 +38,21 @@ function Draw.drawPanelBackground(x, y, w, h)
 end
 
 -- A colored border around a caught species' portrait, instead of a
--- translucent dim overlay: dimming (even with a wide alpha gap between the
--- two states) read as barely-different at a glance against portraits with
--- such varied source brightness/color, and the most visible part of it
--- turned out to be the 1px undimmed edge left at the portrait's border --
--- which is the tell that a deliberate, saturated border reads far more
--- clearly than tinting the whole image ever did. Green once the whole
--- evolution line is caught (D, no longer worth pursuing); purple when the
--- line isn't finished but this species (or an evolution of it) is sitting
--- in the current evolvable-party queue, i.e. no more catching needed here,
--- just play Evolution Mode (C+ -- takes precedence over C but not D, since
--- the dex "caught" flag alone can't tell you whether *this session's* catch
--- is still queued to evolve); orange while just caught with nothing queued
--- (C); black (currently invisible against the panel's own black background,
--- but explicit so it'll show correctly if that background ever changes)
--- when not caught at all.
-Draw.BORDER_COLOR_LINE_CAUGHT = 0xFF34C759
-Draw.BORDER_COLOR_PENDING_EVOLUTION = 0xFFFF2D95
-Draw.BORDER_COLOR_CAUGHT = 0xFFFF9500
+-- translucent dim overlay: dimming read as barely different at a glance
+-- across portraits with such varied source brightness/color.
+--
+-- Colors are chosen for colorblind accessibility as well as meaning (see
+-- scripts/check_colorblind_palette.py). Green once the whole evolution line
+-- is caught (D, no longer worth pursuing); yellow while a caught species (or
+-- its evolution) is queued in Evolution Mode -- more urgent than plain
+-- Caught since it's actionable right now (C+, takes precedence over C but
+-- not D); a muted blue-gray for plain Caught with nothing queued (C) -- not
+-- white, which blends into portraits with pale backgrounds; black (invisible
+-- against the panel's own black background, kept explicit in case that
+-- background changes) when uncaught.
+Draw.BORDER_COLOR_LINE_CAUGHT = 0xFF2FE786
+Draw.BORDER_COLOR_PENDING_EVOLUTION = 0xFFFAF50B
+Draw.BORDER_COLOR_CAUGHT = 0xFF8492BC
 Draw.BORDER_COLOR_UNCAUGHT = 0xFF000000
 
 -- Shared by every panel's portrait/icon cells: D > C+ > C > uncaught.
@@ -78,15 +75,10 @@ end
 -- uses the normal border scheme, including specials with no gate at all
 -- (Groudon/Kyogre/Rayquaza -- entry.eligible left nil/absent for those, see
 -- NormalBoardPanel.readSpecials) and gated species once their condition is
--- met. Deliberately inverted from an earlier "highlight when eligible"
--- version: that made purple mean "catchable now" for 2 of 4 specials while
--- silently implying nothing about the other 2 (which are always catchable),
--- which read as a spawnability signal it wasn't. Flagging the blocked
--- exception instead means the caption only has to explain the one state that
--- deviates from normal ("Can't spawn yet"), not a distinction that doesn't
--- apply uniformly. entry needs {eligible} as tri-state: true (gate met),
--- false (gate not met), nil/absent (no gate, this check never fires).
-Draw.BORDER_COLOR_BLOCKED = 0xFFAF52DE
+-- met. entry needs {eligible} as tri-state: true (gate met), false (gate not
+-- met), nil/absent (no gate, this check never fires). Red, the one
+-- straightforwardly negative state in this palette.
+Draw.BORDER_COLOR_BLOCKED = 0xFFD12007
 
 function Draw.specialBorderColorFor(entry)
 	if not entry.caught and entry.eligible == false then
@@ -97,12 +89,22 @@ end
 
 -- Corner flags are plain solid-color squares, not icons or digits: at this
 -- pixel budget, shapes/glyphs don't read cleanly -- an "ellipse" this small
--- rendered as a square anyway, and drawText numerals were illegible.
--- Colors are chosen so none of the three collide with each other.
+-- rendered as a square anyway, and drawText numerals were illegible. Colors
+-- chosen so none collide with each other, the border colors above, or the
+-- flag marker below (scripts/check_colorblind_palette.py), except pairs
+-- that never appear on screen together: Blocked/Flag are specials-only
+-- (top-right), these three are wild-species-only (bottom-left).
 Draw.MARKER_SIZE = 8
-Draw.RARE_MARKER_COLOR = 0xFFFFD700 -- gold
-Draw.TWO_EXCLUSIVE_MARKER_COLOR = 0xFF2E9BFF -- blue
-Draw.THREE_EXCLUSIVE_MARKER_COLOR = 0xFFFF3B30 -- red
+Draw.RARE_MARKER_COLOR = 0xFFD6A002 -- gold
+Draw.TWO_EXCLUSIVE_MARKER_COLOR = 0xFFE00261 -- pink
+Draw.THREE_EXCLUSIVE_MARKER_COLOR = 0xFF7323B8 -- purple
+
+-- Rayquaza-only: flags that this session's Rayquaza-bonus clear has raised
+-- Latios/Latias's spawn rate (and, per a game bug, lowered Pichu's) -- named
+-- after "the Rayquaza flag" (NormalBoardPanel.isEncounterRateUp). Its own
+-- color rather than RARE_MARKER_COLOR since it doesn't affect Rare-species
+-- odds.
+Draw.FLAG_MARKER_COLOR = 0xFF155D8E -- blue
 
 function Draw.drawMarker(x, y, color)
 	gui.drawRectangle(x, y, Draw.MARKER_SIZE, Draw.MARKER_SIZE, "black", color)

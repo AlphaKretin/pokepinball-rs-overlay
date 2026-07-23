@@ -27,18 +27,18 @@ A [BizHawk](https://github.com/TASEmulators/BizHawk) lua overlay for _Pokémon P
 A Pokémon's Pokédex status is denoted by coloured borders
 
 - Black/no border: Uncaught
-- Orange: Caught, but not fully evolved
-- Magenta: Caught this session, but not fully evolved
+- Blue-gray: Caught, but not fully evolved
+- Yellow: Caught this session, but not fully evolved
 - Green: Fully evolved
-- Purple: This special Pokémon (Pichu/Latios/Latias) can't spawn yet (catch-count gate not yet met)
+- Red: This special Pokémon (Pichu/Latios/Latias) can't spawn yet (catch-count gate not yet met)
 
 Information about a Pokémon's spawning is denoted by a coloured square in the top left of their icon
 
 - Gold: Rare (lower base appearance weight)
-- Blue: Only appears if 2 GET arrows are lit
-- Red: Only appears if 3 GET arrows are lit
+- Pink: Only appears if 2 GET arrows are lit
+- Purple: Only appears if 3 GET arrows are lit
 
-A green square next to the Pokédex total indicates that the Rayquaza bonus game has been cleared this play session (note: not only this board), which raises the chance of Latios and Latias spawning from 1% to 2%, and due to a bug reduces the chance of Pichu spawning from 2% to 1%.
+A slate-blue square next to the Pokédex total indicates that the Rayquaza bonus game has been cleared this play session (note: not only this board), which raises the chance of Latios and Latias spawning from 1% to 2%, and due to a bug reduces the chance of Pichu spawning from 2% to 1%.
 
 ## Other Files
 

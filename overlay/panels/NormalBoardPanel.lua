@@ -7,7 +7,8 @@
 -- GMAIN, PINBALL_GAME, SCREEN_WIDTH, SCREEN_HEIGHT, LINE_HEIGHT,
 -- PANEL_TOP_MARGIN, PANEL_BOTTOM_MARGIN, ADDR_SELECTED_FIELD,
 -- ADDR_AREA_ROULETTE_TABLE, AREA_ROULETTE_TABLE_SLOTS,
--- AREA_ROULETTE_RUIN_SLOT, GAME_X, GAME_Y. Also reads RIGHT_PAD/DOWN_PAD,
+-- AREA_ROULETTE_RUIN_SLOT, GAME_X, GAME_Y, ADDR_MAIN_STATE,
+-- STATE_GAME_MAIN, STATE_GAME_IDLE. Also reads RIGHT_PAD/DOWN_PAD,
 -- which Overlay.lua only sets *after* dofile'ing every panel (once their
 -- CONTENT_MIN_* fields are known) -- fine, since those are only read
 -- inside NormalBoardPanel.draw(), called later from the main loop, not at
@@ -38,6 +39,34 @@ local AREA_VISIT_COUNT_FORCES_RUIN = 5
 -- board-state staleness gate is needed here.
 local ADDR_AREA_ROULETTE_NEXT_SLOT = PINBALL_GAME + 0x033
 local ADDR_AREA_ROULETTE_FAR_SLOT = PINBALL_GAME + 0x034
+
+-- Ball Saver: PinballGame.saverTimeRemaining (offset 0x724, u16), the actual
+-- drain-save grace timer -- confirmed directly against the decomp, not the
+-- per-mode assumption an earlier research pass made. all_board_process2.c's
+-- ball-drain check (~line 456-463) reads this field with no boardState
+-- condition at all: nonzero triggers a ball-save instead of losing the
+-- ball, in whatever mode happens to be running. Every mode-entry write to
+-- this field (Catch-Em, Egg Hatch, Jirachi Catch, Evolution, Travel, intro)
+-- is just that mode granting/resetting a bonus grace window, not a
+-- mode-specific timer of its own -- so displaying it needs no boardState
+-- gate, just "is it currently nonzero."
+local ADDR_SAVER_TIME_REMAINING = PINBALL_GAME + 0x724
+
+-- Egg Hatch Mode has no actual countdown timer -- confirmed by reading
+-- UpdateEggMode (main_board_to_be_split.c): the wandering Pokémon's exit is
+-- driven by PinballGame.creatureWaypointIndex (offset 0x204, s8) stepping
+-- through a fixed waypoint path while boardSubState ==
+-- EGG_HATCH_SUBSTATE_WANDERING; reaching HATCH_ESCAPE_WAYPOINT_INDEX (28)
+-- while close to that waypoint is the actual "it got away uncaught" trigger
+-- (main_board_to_be_split.c:1845-1857). Outside the WANDERING substate this
+-- same field means something else (an entry-animation step), so it's only
+-- meaningful as an escape countdown when boardSubState is checked too.
+local ADDR_BOARD_STATE = PINBALL_GAME + 0x013
+local ADDR_BOARD_SUB_STATE = PINBALL_GAME + 0x017
+local ADDR_CREATURE_WAYPOINT_INDEX = PINBALL_GAME + 0x204
+local MAIN_BOARD_STATE_EGG_HATCH_MODE = 5
+local EGG_HATCH_SUBSTATE_WANDERING = 3
+local HATCH_ESCAPE_WAYPOINT_INDEX = 28
 
 -- gWildMonLocations: ROM data, [14 areas][2 arrow-states][8 slots] of u16
 -- SPECIES_* values, SPECIES_NONE-padded. Area-major, then two-arrows row,
@@ -217,6 +246,26 @@ local EGG_CELL_H = EGG_ICON_H + EGG_CELL_GAP
 local EGG_ICON_DIR = "images/egg_hatch/"
 local EGG_GRID_ROWS = math.ceil(EGG_POOL_SIZE / EGG_GRID_COLUMNS)
 
+-- Dex-count-line icons (self-extracted by GfxExtract.lua). Native crop
+-- sizes, drawn without resizing for the same no-lossy-resize reasoning as
+-- the portrait/egg-hatch grids above -- the hatch-escape egg (16x19) is
+-- taller than LINE_HEIGHT and deliberately allowed to overflow the row
+-- rather than being shrunk to fit, pending a look at how it reads live.
+local ICON_DIR = "images/icons/"
+local CATCH_LIGHT_ICON_PATH = ICON_DIR .. "catch_light.png"
+local HATCH_EGG_ICON_PATH = ICON_DIR .. "hatch_egg.png"
+local CATCH_LIGHT_ICON_W, CATCH_LIGHT_ICON_H = 12, 12
+local SAVER_ICON_W, SAVER_ICON_H = 13, 12
+local HATCH_EGG_ICON_W, HATCH_EGG_ICON_H = 16, 19
+local ICON_TEXT_GAP = 2 -- px between an icon and its own number
+local ICON_SEGMENT_GAP = 6 -- px between one icon+number segment and the next
+
+local function saverIconPath()
+	local field = Memory.readbyte(ADDR_SELECTED_FIELD)
+	local fileName = (field == FIELD_RUBY) and "ball_saver_ruby.png" or "ball_saver_sapphire.png"
+	return ICON_DIR .. fileName
+end
+
 -- Edge-case specials column (right panel, right of the egg grid/travel
 -- diagram content). Same native 48x32 portraits as the spawn grid (already
 -- present in images/portraits/ for all 6 species involved), stacked in one
@@ -259,6 +308,58 @@ NormalBoardPanel.CONTENT_MIN_BELOW_SCREEN_HEIGHT = math.max(CONTENT_MIN_SPAWN_HE
 -- x for the specials column -- see CONTENT_MIN_RIGHT_PAD above, same
 -- leading gap/margin the egg grid itself uses.
 local SPECIAL_COLUMN_X = GAME_X + SCREEN_WIDTH + 4 + EGG_GRID_COLUMNS * EGG_CELL_W + SPECIAL_COLUMN_GAP
+
+-- Frames-to-M:SS at the same 60fps approximation the rest of this codebase
+-- already uses for countdown estimates (GBA's real ~59.7275fps isn't worth
+-- the precision here).
+local function formatMinSec(frames)
+	local totalSeconds = math.floor(frames / 60)
+	return string.format("%d:%02d", math.floor(totalSeconds / 60), totalSeconds % 60)
+end
+
+-- True only while a board (normal or bonus) is actually loaded -- gates
+-- both readers below. Without this, FieldSelectPanel's shared call to
+-- drawEggAndSpecials (STATE_FIELD_SELECT, no board loaded yet) would read
+-- whatever stale PinballGame data is left over from a previous session, per
+-- docs/memory-map.md's mainState section.
+local function isBoardLoaded()
+	local mainState = Memory.readbyte(ADDR_MAIN_STATE)
+	return mainState == STATE_GAME_MAIN or mainState == STATE_GAME_IDLE
+end
+
+-- nil when the saver isn't currently running -- no boardState gate beyond
+-- isBoardLoaded, see ADDR_SAVER_TIME_REMAINING above.
+function NormalBoardPanel.readBallSaverText()
+	if not isBoardLoaded() then
+		return nil
+	end
+	local frames = Memory.readword(ADDR_SAVER_TIME_REMAINING)
+	if frames == 0 then
+		return nil
+	end
+	return formatMinSec(frames)
+end
+
+-- nil outside Hatch Mode entirely; steady HATCH_ESCAPE_WAYPOINT_INDEX
+-- (28, "moves until it escapes" hasn't started ticking down yet) before
+-- EGG_HATCH_SUBSTATE_WANDERING begins, since creatureWaypointIndex is
+-- reused for an unrelated entry-animation walk during the substates before
+-- WANDERING (Ruby's SETUP_WANDERING counts it 0->13, Sapphire's
+-- SAPPHIRE_RAMP_SLIDE counts it 0->6, both reset right as WANDERING starts,
+-- main_board_to_be_split.c:1656/1740) -- reading it raw during that window
+-- would make the displayed countdown dip and then jump back up once real
+-- wandering begins, which reads as a glitch rather than a countdown. Valid
+-- from Hatch Mode's very start otherwise: InitEggMode sets
+-- creatureWaypointIndex = 0 on entry (main_board_to_be_split.c:1609).
+function NormalBoardPanel.readHatchEscapeCountdown()
+	if not isBoardLoaded() or Memory.readbyte(ADDR_BOARD_STATE) ~= MAIN_BOARD_STATE_EGG_HATCH_MODE then
+		return nil
+	end
+	if Memory.readbyte(ADDR_BOARD_SUB_STATE) ~= EGG_HATCH_SUBSTATE_WANDERING then
+		return HATCH_ESCAPE_WAYPOINT_INDEX
+	end
+	return HATCH_ESCAPE_WAYPOINT_INDEX - Memory.readbyte(ADDR_CREATURE_WAYPOINT_INDEX)
+end
 
 function NormalBoardPanel.readDexCaughtCount()
 	local caught = 0
@@ -590,13 +691,13 @@ end
 
 -- No exclusive markers here (that concept doesn't apply to this column) --
 -- just the eligible/caught/line-caught border (Draw.specialBorderColorFor),
--- plus the rate-up marker on Rayquaza's cell specifically when rateUpMarker
+-- plus the flag marker on Rayquaza's cell specifically when rateUpMarker
 -- is set -- see drawEggAndSpecials.
 local function drawSpecialCell(x, y, entry)
 	Draw.safeDrawImage(portraitPath(entry.name), x, y, PORTRAIT_W, PORTRAIT_H)
 	Draw.drawPortraitBorder(x, y, PORTRAIT_W, PORTRAIT_H, Draw.specialBorderColorFor(entry))
 	if entry.rateUpMarker then
-		Draw.drawMarker(x - 2, y - 2, Draw.RARE_MARKER_COLOR)
+		Draw.drawMarker(x - 2, y - 2, Draw.FLAG_MARKER_COLOR)
 	end
 end
 
@@ -674,21 +775,49 @@ function NormalBoardPanel.drawEggAndSpecials(pool, specials, caught, rateUp)
 	-- Sits in the gap between the egg grid's bottom and SCREEN_HEIGHT --
 	-- see CONTENT_MIN_RIGHT_PAD above for why that gap is always big enough
 	-- for one text line without its own content-min term.
-	-- Numeric-only, no "caught"/"dex" label -- leaves room on this row for
-	-- other readouts later, implication is clear from context (this is the
-	-- only x/y count at this position).
-	local dexText = caught .. "/" .. DEX_DISPLAY_TOTAL
+	-- Numeric-only, no "caught"/"dex" label -- this row's original design
+	-- deliberately left room for other readouts later (implication clear
+	-- from context), which is exactly what Ball Saver/hatch-escape below
+	-- are: appended horizontally rather than given their own line, since
+	-- there's no vertical room to spare (per Luna, 2026-07-22) but this row
+	-- has always had slack width-wise (5-icon-wide egg grid above it). Each
+	-- reading gets its own small icon (item 9) instead of a text label, for
+	-- the same width-budget reason.
+	--
+	-- Segment width is estimated via Draw.CD_CHAR_WIDTH (a monospace-advance
+	-- approximation, not a real measurement -- BizHawk's gui API exposes no
+	-- string-measurement function, see Draw.lua) since each segment's x
+	-- position depends on how wide the previous one drew, unlike the
+	-- horizalign="center" case that estimate approach was replaced by
+	-- elsewhere in this codebase.
 	local dexTextY = GAME_Y + SCREEN_HEIGHT - LINE_HEIGHT - PANEL_BOTTOM_MARGIN
-	gui.drawText(x, dexTextY, dexText, "white")
+	local cursorX = x
+
+	Draw.safeDrawImage(CATCH_LIGHT_ICON_PATH, cursorX, dexTextY, CATCH_LIGHT_ICON_W, CATCH_LIGHT_ICON_H)
+	cursorX = cursorX + CATCH_LIGHT_ICON_W + ICON_TEXT_GAP
+	local dexText = caught .. "/" .. DEX_DISPLAY_TOTAL
+	gui.drawText(cursorX, dexTextY, dexText, "white")
+	cursorX = cursorX + #dexText * Draw.CD_CHAR_WIDTH + ICON_SEGMENT_GAP
+
+	local saverText = NormalBoardPanel.readBallSaverText()
+	if saverText then
+		Draw.safeDrawImage(saverIconPath(), cursorX, dexTextY, SAVER_ICON_W, SAVER_ICON_H)
+		cursorX = cursorX + SAVER_ICON_W + ICON_TEXT_GAP
+		gui.drawText(cursorX, dexTextY, saverText, "white")
+		cursorX = cursorX + #saverText * Draw.CD_CHAR_WIDTH + ICON_SEGMENT_GAP
+	end
+
+	local hatchCountdown = NormalBoardPanel.readHatchEscapeCountdown()
+	if hatchCountdown then
+		Draw.safeDrawImage(HATCH_EGG_ICON_PATH, cursorX, dexTextY, HATCH_EGG_ICON_W, HATCH_EGG_ICON_H)
+		cursorX = cursorX + HATCH_EGG_ICON_W + ICON_TEXT_GAP
+		gui.drawText(cursorX, dexTextY, tostring(hatchCountdown), "white")
+	end
 
 	-- Rate-up flag is a global toggle, not a per-mon property, so there's no
 	-- single "correct" special to attach it to -- Rayquaza (always the last
-	-- entry, see readSpecials) is picked as the shared indicator's home
-	-- since it's already a fixed, always-visible portrait rather than
-	-- floating text next to the dex-caught count (relocated per
-	-- .claude/plans/public-polish-deferred.md item 3). Gold, same as
-	-- RARE_MARKER_COLOR (this flag raises rare-mon odds, same "worth
-	-- prioritizing" meaning) -- not a dedicated color yet, see item 4.
+	-- entry, see readSpecials) is picked as the shared indicator's home since
+	-- it's already a fixed, always-visible portrait.
 	specials[#specials].rateUpMarker = rateUp
 
 	for i, entry in ipairs(specials) do

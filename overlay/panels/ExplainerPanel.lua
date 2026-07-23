@@ -75,7 +75,7 @@ local RIGHT_COLUMN = {
 -- since a normal 5th row (portrait + caption stacked in one column) didn't
 -- fit: reclaims one row's worth of height (LINE_HEIGHT + LEGEND_LABEL_GAP)
 -- that stacking would've cost. See drawLegendGrid.
-local RAYQUAZA_ENTRY = { species = "Rayquaza", color = Draw.RARE_MARKER_COLOR, label = "Lati up\nPichu down" }
+local RAYQUAZA_ENTRY = { species = "Rayquaza", color = Draw.FLAG_MARKER_COLOR, label = "Lati up\nPichu down" }
 
 -- gui.drawText's own multi-line handling doesn't work the way you'd expect
 -- from horizalign="center": confirmed live, 2026-07-22 (Luna) -- it centers

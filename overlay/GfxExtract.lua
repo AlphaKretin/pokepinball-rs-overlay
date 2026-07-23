@@ -410,6 +410,168 @@ local function extractEggHatchIcons()
 	return count
 end
 
+-- ---------------------------------------------------------------------------
+-- Dex-count-line icons: hatch-escape egg, catch light, Ball Saver field
+-- light.
+local ICON_DIR = "images/icons/"
+
+-- Reads a little-endian u32 ROM pointer stored at addr -- these tables store
+-- already-absolute 0x08xxxxxx ROM addresses, not offsets, so no rebasing.
+local function readRomPointer(addr)
+	local b0 = Memory.readbyte(addr)
+	local b1 = Memory.readbyte(addr + 1)
+	local b2 = Memory.readbyte(addr + 2)
+	local b3 = Memory.readbyte(addr + 3)
+	return b0 | (b1 << 8) | (b2 << 16) | (b3 << 24)
+end
+
+-- Crops a decoded [y][x] palette-index image to crop.{x0,y0,x1,y1}
+-- (half-open) and folds any pixel matching extraPx's index (an antialiased
+-- edge color, e.g. Ball Saver's crop) into the background index (whatever's
+-- at the UNCROPPED image's (0,0)) so writePng's single alphaIndex parameter
+-- still covers both. Returns the cropped image, its background/alpha index,
+-- and its width/height.
+local function cropAndMarkTransparent(img, crop, extraPx)
+	local bgIndex = img[0][0]
+	local extraIndex = extraPx and img[extraPx.y][extraPx.x] or nil
+	local out = {}
+	for y = crop.y0, crop.y1 - 1 do
+		local row = {}
+		for x = crop.x0, crop.x1 - 1 do
+			local idx = img[y][x]
+			if extraIndex and idx == extraIndex then
+				idx = bgIndex
+			end
+			row[x - crop.x0] = idx
+		end
+		out[y - crop.y0] = row
+	end
+	return out, bgIndex, crop.x1 - crop.x0, crop.y1 - crop.y0
+end
+
+-- Hatch-escape egg: gEggFrameTilesGfx frame 0, a plain flat 4x4-tile raster
+-- (mWidth=mHeight=1 degenerates assembleMetatileImage's grouping into pure
+-- raster order, not metatile order -- no mon_portraits_gfx.json-style
+-- sidecar config exists for this asset in the decomp). Renders identically
+-- on both fields, so only Ruby's palette variant is extracted. The palette
+-- itself is field/scroll-dependent for the ambient board decoration this
+-- frame is normally drawn as (gFieldPaletteVariants, OBJ palette bank 11 per
+-- gHatchCaveOamFramesets' OAM entries), unlike every other icon this file
+-- extracts, which all own a dedicated palette.
+local EGG_GFX_ADDR = 0x084FD18C
+local EGG_PAL_ADDR = 0x08137B3C -- gFieldPaletteVariants[FIELD_RUBY][0] (camera-high variant)
+local EGG_CROP = { x0 = 8, y0 = 3, x1 = 24, y1 = 22 }
+
+local function extractEggIcon()
+	local path = ICON_DIR .. "hatch_egg.png"
+	if fileExists(path) then
+		return 0
+	end
+	local bytes = readBytes(EGG_GFX_ADDR, 0x200)
+	local fullImg = assembleMetatileImage(bytes, 4, 4, 1, 1)
+	local pal = readPalette(EGG_PAL_ADDR, 16)
+	local img, alphaIndex, w, h = cropAndMarkTransparent(fullImg, EGG_CROP)
+	ensureDir(ICON_DIR)
+	if writePng(path, img, pal, w, h, true, alphaIndex) then
+		return 1
+	end
+	return 0
+end
+
+-- Dex-count catch light: gRubyCatchLightTilePointers (3 slots x 7 tile
+-- states x 2 halves), slot 0 state 1 -- "normal mode, on" (a lit pokeball).
+-- States 4/5 reuse the same array for EVO-mode letter graphics ("E"/"O")
+-- during Evolution Mode instead. Shared for both fields -- Sapphire's own
+-- catch-light tile data renders visibly wrong against this state/bank, so
+-- no per-field variant, unlike Ball Saver below.
+local CATCH_LIGHT_PTR_TABLE = 0x086B09E8
+local CATCH_LIGHT_PAL_ADDR = 0x081BFEE4 -- gRubyBoardPalette bank 0
+local CATCH_LIGHT_CROP = { x0 = 2, y0 = 2, x1 = 14, y1 = 14 }
+
+local function extractCatchLightIcon()
+	local path = ICON_DIR .. "catch_light.png"
+	if fileExists(path) then
+		return 0
+	end
+	local entryAddr = CATCH_LIGHT_PTR_TABLE + (0 * 7 + 1) * 2 * 4 -- slot 0, state 1
+	local half0Addr = readRomPointer(entryAddr)
+	local half1Addr = readRomPointer(entryAddr + 4)
+	local fullImg = {}
+	for y = 0, 15 do
+		fullImg[y] = {}
+	end
+	for hi, haddr in ipairs({ half0Addr, half1Addr }) do
+		local bytes = readBytes(haddr, 0x40)
+		for ti = 0, 1 do
+			local tile = decodeTile4bpp(bytes, ti)
+			for r = 0, 7 do
+				for c = 0, 7 do
+					fullImg[(hi - 1) * 8 + r][ti * 8 + c] = tile[r][c]
+				end
+			end
+		end
+	end
+	local pal = readPalette(CATCH_LIGHT_PAL_ADDR, 16)
+	local img, alphaIndex, w, h = cropAndMarkTransparent(fullImg, CATCH_LIGHT_CROP)
+	ensureDir(ICON_DIR)
+	if writePng(path, img, pal, w, h, true, alphaIndex) then
+		return 1
+	end
+	return 0
+end
+
+-- Ball Saver field light: state 1 ("on"), a right-aligned tapering
+-- trapezoid (6/6/5/2 tiles per row, NOT a rectangle) baked directly into the
+-- board's BG tilemap rather than an OBJ sprite -- see
+-- docs/graphics-extraction.md if more BG-tilemap assets like this show up.
+-- Palette genuinely differs per field (Latios blue vs Latias pink), unlike
+-- the catch light above.
+local SAVER_ROW_WIDTHS = { 6, 6, 5, 2 }
+local SAVER_CROP = { x0 = 5, y0 = 1, x1 = 18, y1 = 13 }
+local SAVER_EXTRA_TRANSPARENT_PX = { x = 8, y = 3 } -- antialiased edge color
+local SAVER_CONFIGS = {
+	{ name = "ball_saver_ruby", ptrTable = 0x086B0A90, palAddr = 0x081BFEE4 },
+	{ name = "ball_saver_sapphire", ptrTable = 0x086B11CC, palAddr = 0x0826EC10 },
+}
+
+local function extractSaverIcons()
+	local count = 0
+	for _, cfg in ipairs(SAVER_CONFIGS) do
+		local path = ICON_DIR .. cfg.name .. ".png"
+		if not fileExists(path) then
+			local state = 1 -- "on"
+			local fullImg = {}
+			for y = 0, 31 do
+				fullImg[y] = {}
+				for x = 0, 6 * 8 - 1 do
+					fullImg[y][x] = 0
+				end
+			end
+			for ri = 0, 3 do
+				local rowAddr = readRomPointer(cfg.ptrTable + (state * 4 + ri) * 4)
+				local tileWidth = SAVER_ROW_WIDTHS[ri + 1]
+				local bytes = readBytes(rowAddr, tileWidth * 32)
+				local pad = 6 - tileWidth
+				for tx = 0, tileWidth - 1 do
+					local tile = decodeTile4bpp(bytes, tx)
+					for r = 0, 7 do
+						for c = 0, 7 do
+							fullImg[ri * 8 + r][(pad + tx) * 8 + c] = tile[r][c]
+						end
+					end
+				end
+			end
+			local pal = readPalette(cfg.palAddr, 16)
+			local img, alphaIndex, w, h = cropAndMarkTransparent(fullImg, SAVER_CROP, SAVER_EXTRA_TRANSPARENT_PX)
+			ensureDir(ICON_DIR)
+			if writePng(path, img, pal, w, h, true, alphaIndex) then
+				count = count + 1
+			end
+		end
+	end
+	return count
+end
+
 -- Runs once at overlay startup (before the main frame loop). Only extracts
 -- files that don't already exist, so this is a no-op cost on every launch
 -- after the first.
@@ -417,10 +579,11 @@ function GfxExtract.ensureAll()
 	local areaCount = extractAreaIcons()
 	local portraitCount = extractPortraits()
 	local eggCount = extractEggHatchIcons()
-	local total = areaCount + portraitCount + eggCount
+	local iconCount = extractEggIcon() + extractCatchLightIcon() + extractSaverIcons()
+	local total = areaCount + portraitCount + eggCount + iconCount
 	if total > 0 then
 		console.log(string.format(
-			"GfxExtract: extracted %d area icon(s), %d portrait(s), %d egg-hatch icon(s) from ROM",
-			areaCount, portraitCount, eggCount))
+			"GfxExtract: extracted %d area icon(s), %d portrait(s), %d egg-hatch icon(s), %d misc icon(s) from ROM",
+			areaCount, portraitCount, eggCount, iconCount))
 	end
 end

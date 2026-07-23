@@ -15,13 +15,14 @@ import numpy as np
 # constants.
 colors = {
     "Uncaught (black)": 0x000000,
-    "Caught (orange)": 0xFF9500,
-    "Pending evo (magenta)": 0xFF2D95,
-    "Line complete (green)": 0x34C759,
-    "Blocked (purple)": 0xAF52DE,
-    "Rare marker (gold)": 0xFFD700,
-    "2-arrow marker (blue)": 0x2E9BFF,
-    "3-arrow marker (red)": 0xFF3B30,
+    "Caught (blue-gray)": 0x8492BC,
+    "Pending evo (yellow)": 0xFAF50B,
+    "Line complete (green)": 0x2FE786,
+    "Blocked (red)": 0xD12007,
+    "Rare marker (gold)": 0xD6A002,
+    "Flag marker (blue)": 0x155D8E,
+    "2-arrow marker (pink)": 0xE00261,
+    "3-arrow marker (purple)": 0x7323B8,
 }
 
 

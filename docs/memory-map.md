@@ -522,6 +522,36 @@ up-to-2-hop evolution targets (same depth as `isEvolutionLineCaught`) against
 this queue to decide whether to show the "C+" (caught, evolution pending)
 border state instead of plain "C".
 
+## Ball Saver
+
+`PinballGame.saverTimeRemaining` (offset `0x724`, abs `0x02000724`, u16,
+`include/global.h:807`) is the actual drain-save grace timer, not a
+per-mode timer as an earlier research pass assumed. `all_board_process2.c`'s
+ball-drain check (~line 456-463) reads it with no `boardState` condition at
+all — nonzero triggers a ball-save (`MODE_CHANGE_BALL_SAVER`) instead of the
+normal ball-lost path, in whatever mode happens to be running. Every
+mode-entry point that writes it (`InitCatchEmMode`, `InitEggMode`,
+`InitJirachiCatchMode`, Evolution Mode init, Travel Mode init, intro) is
+just that mode granting/resetting a bonus grace window, confirmed as a
+direct overwrite (`=`), not additive (`+=`) — e.g.
+`main_board_center_capture_hole.c:252`'s roulette-prize bonus
+(`(prizeId + 1) * 1800`) replaces whatever time was left rather than adding
+to it. Live-observed by Luna via the overlay's new readout (2026-07-22),
+matching this: collecting a saver-extending prize overwrites rather than
+stacks.
+
+Decremented once per frame whenever nonzero and the ball isn't trapped
+(`ruby_board_indicators.c:73-75`, `sapphire_board_indicators.c:81-83`),
+inside the top-level per-frame animation-update function — unconditional on
+board substate, unlike mode-specific timers (`stageTimer`, `eventTimer`)
+which live inside substate-gated update branches and so pause during
+transition/animation substates. This is why Luna observed the saver timer
+keeps counting through animations that visibly pause other timers.
+
+The game's own UI for this is not a numeric readout — just a binary blink
+light (`DrawRubyModeTimerDisplay`/`saverLit`: solid above 300 frames left,
+blinking below, off at 0).
+
 ## Known gaps
 
 Things not yet confirmed from source reading — either need more digging in
@@ -529,7 +559,7 @@ Things not yet confirmed from source reading — either need more digging in
 RAM watch:
 
 1. `CheckAllPokemonCaught()` completion definition.
-2. `gWildMonLocations` / `gCommonAndEggWeights` data table contents.
+2. `gCommonAndEggWeights` (rarity weight table) data table contents.
 3. Whether RNG/frame-counter state survives savestate load or pause — load a
    savestate mid-game and watch `0x0200B108`/`0x0200B10C`/`0x0200B110` for any
    discontinuity.
