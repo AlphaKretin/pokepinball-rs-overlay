@@ -75,19 +75,16 @@ local function drawKecleon()
 	local x, y = drawHeader("Kecleon")
 	local boardState = Memory.readbyte(ADDR_BOARD_STATE)
 	if boardState ~= BATTLE_PHASE then
-		gui.drawText(x, y, "(not in battle phase)", "white")
 		return
 	end
 	local hits = Memory.readbyte(ADDR_BONUS_MODE_HIT_COUNT)
 	drawStat(x, y, "Hits", hits, KECLEON_HITS_REQUIRED)
 
-	y = y + LINE_HEIGHT + 8
 	if Memory.readbyte(ADDR_KECLEON_TARGET_ACTIVE) ~= 0 then
+		y = y + LINE_HEIGHT + 8
 		local remainingFrames = DEVON_SCOPE_DURATION_FRAMES - Memory.readword(ADDR_KECLEON_ANIM_TIMER)
 		local remainingSeconds = math.max(0, math.floor(remainingFrames / FRAMES_PER_SECOND))
 		gui.drawText(x, y, "Devon Scope: " .. remainingSeconds .. "s", "white")
-	else
-		gui.drawText(x, y, "Devon Scope: inactive", "white")
 	end
 end
 
@@ -99,8 +96,6 @@ local function drawDusclops()
 		drawStat(x, y, "Duskull", hits, DUSKULL_HITS_REQUIRED)
 	elseif boardState == DUSCLOPS_BOARD_STATE_DUSCLOPS_PHASE then
 		drawStat(x, y, "Hits", hits, DUSCLOPS_HITS_REQUIRED)
-	else
-		gui.drawText(x, y, "(intro/scoring phase)", "white")
 	end
 end
 
@@ -108,7 +103,6 @@ local function drawLegendary(name)
 	local x, y = drawHeader(name)
 	local boardState = Memory.readbyte(ADDR_BOARD_STATE)
 	if boardState ~= BATTLE_PHASE then
-		gui.drawText(x, y, "(not in battle phase)", "white")
 		return
 	end
 	local hits = Memory.readbyte(ADDR_BONUS_MODE_HIT_COUNT)
