@@ -12,6 +12,7 @@ A [BizHawk](https://github.com/TASEmulators/BizHawk) lua overlay for _Pokémon P
 - Displays if a Pokémon is rare or requires 2 or 3 GET arrows
 - Displays current and potential next areas with completion counters to inform travel decisions
 - Displays progress during Bonus Stages
+- Displays a countdown for Ball Saver and Hatch Mode
 - 16:9 aspect ratio (including game display) for convenient recording or fullscreen.
 
 ## Installation
@@ -38,7 +39,7 @@ Information about a Pokémon's spawning is denoted by a coloured square in the t
 - Pink: Only appears if 2 GET arrows are lit
 - Purple: Only appears if 3 GET arrows are lit
 
-A slate-blue square next to the Pokédex total indicates that the Rayquaza bonus game has been cleared this play session (note: not only this board), which raises the chance of Latios and Latias spawning from 1% to 2%, and due to a bug reduces the chance of Pichu spawning from 2% to 1%.
+A slate-blue square in the corner of Rayquaza's portrait indicates that the Rayquaza bonus game has been cleared this play session (note: not only this board), which raises the chance of Latios and Latias spawning from 1% to 2%, and due to a bug reduces the chance of Pichu spawning from 2% to 1%.
 
 ## Other Files
 
