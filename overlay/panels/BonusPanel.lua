@@ -114,9 +114,9 @@ local function drawSpheal()
 	local x, y = drawHeader("Spheal")
 	local sphealCount = Memory.readbyte(ADDR_SPHEAL_KNOCKDOWN_COUNT)
 	local ballCount = Memory.readbyte(ADDR_SPHEAL_KNOCKDOWN_COUNT + 1)
-	gui.drawText(x, y, "Spheal knockdowns: " .. sphealCount, "white")
+	gui.drawText(x, y, "Spheal dunks: " .. sphealCount, "white")
 	y = y + LINE_HEIGHT + 4
-	gui.drawText(x, y, "Ball-throughs: " .. ballCount, "white")
+	gui.drawText(x, y, "Ball dunks: " .. ballCount, "white")
 	y = y + LINE_HEIGHT + 8
 	local score = sphealCount * SPHEAL_POINTS_PER_KNOCKDOWN + ballCount * SPHEAL_POINTS_PER_BALL
 	gui.drawText(x, y, "Score: " .. score, "white")
